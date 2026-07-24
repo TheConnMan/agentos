@@ -14,9 +14,9 @@ import os
 import anyio
 import pytest
 from aci_protocol import Event, SessionStatus, parse_ndjson
-from agentos_runner import RunTracer, SideEffectClassifier, build_options
-from agentos_runner.adapter import ClaudeAgentSession
-from agentos_runner.session import SessionRunner
+from curie_runner import RunTracer, SideEffectClassifier, build_options
+from curie_runner.adapter import ClaudeAgentSession
+from curie_runner.session import SessionRunner
 
 _HAS_CRED = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"))
 _OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
@@ -131,8 +131,8 @@ def test_live_steer_and_cache_reuse() -> None:
     reason="no OPENROUTER_API_KEY (sk-or-...) in env",
 )
 def test_live_openrouter_cache_reuse() -> None:
-    from agentos_runner.sdk_auth import CREDENTIALS_ENV, resolve_model_credential
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
+    from curie_runner.sdk_auth import CREDENTIALS_ENV, resolve_model_credential
 
     env: dict[str, str] = {CREDENTIALS_ENV: _OPENROUTER_KEY}
     resolve_model_credential(env)
@@ -179,7 +179,7 @@ def test_live_permission_gate_pauses_awaiting_approval() -> None:
     approval-required is intercepted by can_use_tool (never executed) and the
     turn ends awaiting-approval with the blocked call in the summary."""
 
-    from agentos_runner.approval import ApprovalGate, build_can_use_tool
+    from curie_runner.approval import ApprovalGate, build_can_use_tool
 
     gate = ApprovalGate(required=frozenset({"Bash"}))
     options = build_options(
@@ -211,7 +211,7 @@ def test_live_permission_gate_pauses_awaiting_approval() -> None:
             async for line in runner.run_turn(
                 Event(
                     type="message",
-                    text="Run the shell command `echo agentos-gate-live` and report its output.",
+                    text="Run the shell command `echo curie-gate-live` and report its output.",
                     user="U-live",
                     ts="1.0",
                 )
@@ -229,4 +229,4 @@ def test_live_permission_gate_pauses_awaiting_approval() -> None:
     assert final.approval_summary.startswith("Tool call awaiting approval: Bash")
     # The blocked command never executed and never produced output text
     # claiming it ran; the summary records what WOULD have run.
-    assert "echo agentos-gate-live" in final.approval_summary
+    assert "echo curie-gate-live" in final.approval_summary

@@ -3,15 +3,15 @@
 //!
 //! The redis client is NOT mocked: the XADD runs against the compose dev Valkey
 //! (host port 26379, password `valkeypass`) on a unique test-scoped stream that
-//! the test deletes afterward. It never touches the real `agentos:runs` stream.
+//! the test deletes afterward. It never touches the real `curie:runs` stream.
 //! The Slack stub is the real one; only its client (reqwest) stands in for the
 //! worker.
 
 use std::time::Duration;
 
-use agentos::chat::{resolve_targets, SlackStub};
-use agentos::queue::{diagnostics, entry_acked, synthetic_turn, xadd, WORKER_GROUP};
-use agentos_aci_protocol::QueuedTurn;
+use curie::chat::{resolve_targets, SlackStub};
+use curie::queue::{diagnostics, entry_acked, synthetic_turn, xadd, WORKER_GROUP};
+use curie_aci_protocol::QueuedTurn;
 
 mod support;
 use support::{unique_stream, valkey_or_skip};
@@ -22,11 +22,11 @@ async fn xadd_lands_the_exact_seam_shape_on_real_valkey() {
     else {
         return;
     };
-    let stream = unique_stream("agentos:test:chat:");
+    let stream = unique_stream("curie:test:chat:");
 
     let event = synthetic_turn(
         "C-SIM-x",
-        "U-agentos-chat",
+        "U-curie-chat",
         "hello world",
         "111.100",
         "111.200",
@@ -99,7 +99,7 @@ async fn explicit_channel_and_thread_land_verbatim_on_the_wire() {
     else {
         return;
     };
-    let stream = unique_stream("agentos:test:chat:");
+    let stream = unique_stream("curie:test:chat:");
 
     let (channel, thread_ts, placeholder_ts) =
         resolve_targets(Some("CSIM12345"), Some("1720000000.000100"));
@@ -111,7 +111,7 @@ async fn explicit_channel_and_thread_land_verbatim_on_the_wire() {
 
     let event = synthetic_turn(
         &channel,
-        "U-agentos-chat",
+        "U-curie-chat",
         "hi",
         &thread_ts,
         &placeholder_ts,
@@ -153,7 +153,7 @@ async fn absent_channel_and_thread_fall_back_to_synthetic() {
     else {
         return;
     };
-    let stream = unique_stream("agentos:test:chat:");
+    let stream = unique_stream("curie:test:chat:");
 
     let (channel, thread_ts, placeholder_ts) = resolve_targets(None, None);
     assert!(
@@ -167,7 +167,7 @@ async fn absent_channel_and_thread_fall_back_to_synthetic() {
 
     let event = synthetic_turn(
         &channel,
-        "U-agentos-chat",
+        "U-curie-chat",
         "hi",
         &thread_ts,
         &placeholder_ts,
@@ -211,16 +211,16 @@ async fn diagnostics_reports_stream_length_and_consumer_group_state() {
     else {
         return;
     };
-    let stream = unique_stream("agentos:test:chat:");
+    let stream = unique_stream("curie:test:chat:");
 
-    let event = synthetic_turn("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2", None);
+    let event = synthetic_turn("C-SIM-x", "U-curie-chat", "hi", "1.1", "1.2", None);
     let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
 
     // The worker's group name; create it at 0 so it sees the existing entry.
     let _: () = redis::cmd("XGROUP")
         .arg("CREATE")
         .arg(&stream)
-        .arg("agentos-workers")
+        .arg("curie-workers")
         .arg("0")
         .query_async(&mut conn)
         .await
@@ -238,7 +238,7 @@ async fn diagnostics_reports_stream_length_and_consumer_group_state() {
     assert!(report.contains(&stream_id), "names our entry:\n{report}");
     assert!(report.contains("XLEN 1"), "reports length:\n{report}");
     assert!(
-        report.contains("agentos-workers"),
+        report.contains("curie-workers"),
         "surfaces the consumer group:\n{report}"
     );
     assert!(
@@ -256,8 +256,8 @@ async fn entry_acked_tracks_the_worker_consuming_and_acking() {
     else {
         return;
     };
-    let stream = unique_stream("agentos:test:chat:");
-    let event = synthetic_turn("C-SIM-x", "U-agentos-chat", "hi", "1.1", "1.2", None);
+    let stream = unique_stream("curie:test:chat:");
+    let event = synthetic_turn("C-SIM-x", "U-curie-chat", "hi", "1.1", "1.2", None);
     let stream_id = xadd(&mut conn, &stream, &event).await.unwrap();
 
     // No group yet: not acked.

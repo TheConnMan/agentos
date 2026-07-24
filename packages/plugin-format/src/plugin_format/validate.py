@@ -453,7 +453,7 @@ def _gate_not_namespaced_message(gate: str, bundle: str, mcp_servers: set[str]) 
         f"{declared}. A built-in tool gate (e.g. Bash) carries no mcp__ prefix. "
         "A MANIFEST approvalPolicy gate must be the fully-namespaced live name "
         "(this deploy gate does not normalize it). The per-agent "
-        "AGENTOS_APPROVAL_REQUIRED_TOOLS env knob is more lenient (#703): the runner "
+        "CURIE_APPROVAL_REQUIRED_TOOLS env knob is more lenient (#703): the runner "
         "normalizes a bare mcp__<server>__<tool> shorthand for a DECLARED server to "
         "its effective name, and also accepts an already-namespaced "
         "mcp__plugin_<bundle>_<server>__<tool> or a built-in name -- but only for a "
@@ -493,7 +493,7 @@ def _validate_secrets(manifest: PluginManifest, c: _Collector) -> None:
             )
         elif is_reserved_boot_env_name(name):
             # Reserved sandbox boot-env / model-credential keys (#457, #445):
-            # the whole AGENTOS_* namespace plus the runner's non-prefixed
+            # the whole CURIE_* namespace plus the runner's non-prefixed
             # credential keys (ANTHROPIC_BASE_URL etc). A connector secret must
             # not declare one -- it would clobber or be dropped by the worker
             # binding at delivery time, or silently redirect the model session.

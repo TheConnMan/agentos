@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from agentos_api import bundles
+from curie_api import bundles
 
 MANIFEST = '{"name": "demo-plugin", "version": "0.1.0"}'
 

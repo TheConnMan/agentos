@@ -6,7 +6,7 @@ create agent -> create version -> deploy to dev -> list/get, the B1 done-when.
 import asyncio
 from typing import Any
 
-from agentos_api.config import get_settings
+from curie_api.config import get_settings
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -224,7 +224,7 @@ def test_delete_agent_removes_it_and_cascades_versions(
     )
     assert (
         _count(
-            "SELECT count(*) FROM agentos.agent_versions WHERE agent_id = :aid",
+            "SELECT count(*) FROM curie.agent_versions WHERE agent_id = :aid",
             agent_id,
         )
         == 1
@@ -238,7 +238,7 @@ def test_delete_agent_removes_it_and_cascades_versions(
     assert [a["id"] for a in client.get("/agents", headers=auth_headers).json()] == []
     assert (
         _count(
-            "SELECT count(*) FROM agentos.agent_versions WHERE agent_id = :aid",
+            "SELECT count(*) FROM curie.agent_versions WHERE agent_id = :aid",
             agent_id,
         )
         == 0

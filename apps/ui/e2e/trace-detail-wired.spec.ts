@@ -2,7 +2,7 @@ import { test, expect, type Page, type Route } from "@playwright/test";
 
 // FX2 items 3 & 4: the wired trace drill-in. A trace with no observations is a
 // legitimate empty state (honest empty view, not an error toast); a trace whose
-// resource/metadata carries agentos.sandbox_id shows which sandbox served it.
+// resource/metadata carries curie.sandbox_id shows which sandbox served it.
 
 const TRACES = [{ id: "tr1", name: "deal-desk run", timestamp: "2026-07-05T14:02:07Z" }];
 
@@ -32,10 +32,10 @@ test("a trace with no observations renders an honest empty state, not an error",
   await expect(page.getByText(/trace has no observations yet/)).toHaveCount(0);
 });
 
-test("a trace carrying agentos.sandbox_id shows which sandbox served it", async ({ page }) => {
+test("a trace carrying curie.sandbox_id shows which sandbox served it", async ({ page }) => {
   await page.route("**/api/langfuse/traces/tr1*", (route) =>
     json(route, 200, {
-      trace: { id: "tr1", name: "deal-desk run", metadata: { "agentos.sandbox_id": "runner-deal-desk-abc123" } },
+      trace: { id: "tr1", name: "deal-desk run", metadata: { "curie.sandbox_id": "runner-deal-desk-abc123" } },
       tree: [{ id: "o1", type: "SPAN", name: "handle_message", model: null, startTime: null, usageDetails: null, children: [] }],
     }),
   );

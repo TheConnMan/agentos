@@ -7,14 +7,14 @@ import json
 
 import aiohttp
 import pytest
-from agentos_worker.config import WorkerConfig
-from agentos_worker.slack_sink import AsyncSlackSink
 from channel_protocol import (
     MESSAGE_VERSION,
     Action,
     ConfirmIntent,
     OutboundMessage,
 )
+from curie_worker.config import WorkerConfig
+from curie_worker.slack_sink import AsyncSlackSink
 from slack_sdk.errors import SlackApiError
 
 
@@ -97,7 +97,7 @@ def test_update_renders_blocks_for_a_reply_convention() -> None:
 
     sink._client_for(None).chat_update = _fake_chat_update  # type: ignore[method-assign]
 
-    text = '```agentos-reply\n{"header": "Hi", "text": "body"}\n```'
+    text = '```curie-reply\n{"header": "Hi", "text": "body"}\n```'
     asyncio.run(sink.update(channel="C1", ts="1.1", text=text))
 
     assert isinstance(captured.get("blocks"), list)
@@ -135,12 +135,12 @@ def test_clear_status_is_best_effort_on_error() -> None:
 
 
 def test_config_no_edit_streaming_defaults_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("AGENTOS_SLACK_NO_EDIT_STREAMING", raising=False)
+    monkeypatch.delenv("CURIE_SLACK_NO_EDIT_STREAMING", raising=False)
     assert WorkerConfig().slack_no_edit_streaming is False
 
 
 def test_config_reads_no_edit_streaming_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENTOS_SLACK_NO_EDIT_STREAMING", "true")
+    monkeypatch.setenv("CURIE_SLACK_NO_EDIT_STREAMING", "true")
     assert WorkerConfig().slack_no_edit_streaming is True
 
 
@@ -154,7 +154,7 @@ def test_update_renders_status_and_link_blocks_for_a_reply() -> None:
     sink._client_for(None).chat_update = _fake_chat_update  # type: ignore[method-assign]
 
     text = (
-        '```agentos-reply\n'
+        '```curie-reply\n'
         '{"status": "Working", "text": "body", "links": [["Docs", "https://x/y"]]}\n'
         '```'
     )
@@ -191,7 +191,7 @@ def test_update_falls_back_to_text_only_on_slack_api_error() -> None:
 
     sink._client_for(None).chat_update = _fake_chat_update  # type: ignore[method-assign]
 
-    text = '```agentos-reply\n{"header": "Hi", "text": "body"}\n```'
+    text = '```curie-reply\n{"header": "Hi", "text": "body"}\n```'
     # Must not raise: the rejected blocks update falls back to a text-only update.
     asyncio.run(sink.update(channel="C1", ts="1.1", text=text))
 
@@ -218,7 +218,7 @@ def test_update_fallback_text_stays_within_slack_text_cap() -> None:
 
     sink._client_for(None).chat_update = _fake_chat_update  # type: ignore[method-assign]
 
-    text = "```agentos-reply\n" + json.dumps({"header": "H", "text": "x" * 60000}) + "\n```"
+    text = "```curie-reply\n" + json.dumps({"header": "H", "text": "x" * 60000}) + "\n```"
     # Must not raise: the fallback text is bounded so the retry succeeds.
     asyncio.run(sink.update(channel="C1", ts="1.1", text=text))
 
@@ -238,7 +238,7 @@ def test_update_does_not_retry_when_blocks_update_succeeds() -> None:
 
     sink._client_for(None).chat_update = _fake_chat_update  # type: ignore[method-assign]
 
-    text = '```agentos-reply\n{"header": "Hi", "text": "body"}\n```'
+    text = '```curie-reply\n{"header": "Hi", "text": "body"}\n```'
     asyncio.run(sink.update(channel="C1", ts="1.1", text=text))
 
     assert len(calls) == 1  # a spurious retry would make this 2
@@ -443,7 +443,7 @@ def test_post_renders_the_approval_card_from_a_confirm_intent() -> None:
     # The adapter turns a Confirm intent into the Block Kit approval card: header,
     # the summary section, a "Requested by" context line, and Approve/Reject
     # buttons carrying the dispatcher's action ids + the record id as value.
-    from agentos_dispatcher.approval_actions import APPROVE_ACTION_ID, REJECT_ACTION_ID
+    from curie_dispatcher.approval_actions import APPROVE_ACTION_ID, REJECT_ACTION_ID
 
     sink = AsyncSlackSink("xoxb-test")
     captured: dict[str, object] = {}

@@ -1,8 +1,8 @@
-# Eval fan-out seam: `agentos:evals`
+# Eval fan-out seam: `curie:evals`
 
 The API is the producer of eval jobs; a worker consumer (a separate worker-lane
 task) runs them. This documents the wire contract so the consumer can be built
-against it, the same way the dispatcher documents `agentos:runs`.
+against it, the same way the dispatcher documents `curie:runs`.
 
 ## When the API enqueues
 
@@ -13,8 +13,8 @@ evals. Other refs, unknown repos, and rejected bundles never enqueue.
 
 ## Stream and wire encoding
 
-- Stream: `agentos:evals` (distinct from the dispatcher's `agentos:runs`).
-- Encoding mirrors `agentos:runs` exactly: one stream field named `payload`
+- Stream: `curie:evals` (distinct from the dispatcher's `curie:runs`).
+- Encoding mirrors `curie:runs` exactly: one stream field named `payload`
   holds the model as `model_dump_json()`. A one-field JSON blob keeps the seam
   explicit and versionable (add fields without reshaping the stream schema).
 - The producer and consumer share `aci_protocol.EvalJob` (`packages/aci-protocol`);
@@ -35,7 +35,7 @@ evals. Other refs, unknown repos, and rejected bundles never enqueue.
 ## Consumer responsibilities (not built here)
 
 Read the stream with a consumer group, reconstruct the `EvalJob`, run
-`python -m agentos_worker.eval` for the version (resolving the suite JSON from the
+`python -m curie_worker.eval` for the version (resolving the suite JSON from the
 bundle and pointing it at a runner), and — on completion — POST the rollup to the
 API's `POST /evals/report` so the GitHub commit status is set. The recorder
 already writes `eval_pass` scores that the API's `GET /evals/matrix` reads back.

@@ -308,6 +308,6 @@ def test_approval_request_null_gate_kind_succeeds() -> None:
 
 
 def test_transport_constants_have_their_wire_values() -> None:
-    assert RUNS_STREAM_DEFAULT == "agentos:runs"
-    assert WORKER_GROUP_DEFAULT == "agentos-workers"
+    assert RUNS_STREAM_DEFAULT == "curie:runs"
+    assert WORKER_GROUP_DEFAULT == "curie-workers"
     assert STREAM_PAYLOAD_FIELD == "payload"

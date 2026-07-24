@@ -1,4 +1,4 @@
-"""AGENTOS_CREDENTIALS -> SDK credential env resolution.
+"""CURIE_CREDENTIALS -> SDK credential env resolution.
 
 All values are fake placeholders; this never touches a real credential.
 """
@@ -6,7 +6,7 @@ All values are fake placeholders; this never touches a real credential.
 from __future__ import annotations
 
 import pytest
-from agentos_runner.sdk_auth import (
+from curie_runner.sdk_auth import (
     API_BACKEND_ENV,
     API_KEY_ENV,
     AUTH_TOKEN_ENV,
@@ -65,7 +65,7 @@ def test_oauth_token_maps_to_oauth_env() -> None:
     assert API_KEY_ENV not in env
 
 
-def test_explicit_sdk_credential_wins_over_agentos_credentials() -> None:
+def test_explicit_sdk_credential_wins_over_curie_credentials() -> None:
     env = {OAUTH_TOKEN_ENV: "explicit-PLACEHOLDER", CREDENTIALS_ENV: "sk-ant-PLACEHOLDER"}
     resolve_model_credential(env)
     # The explicit SDK var is untouched; the reference is ignored (no API key set).
@@ -110,7 +110,7 @@ def test_no_credential_is_a_noop() -> None:
 
 
 def test_base_url_override_sets_sdk_base_url_and_placeholder_api_key() -> None:
-    from agentos_runner.sdk_auth import (
+    from curie_runner.sdk_auth import (
         BASE_URL_ENV,
         NO_OP_API_KEY,
         resolve_base_url_override,
@@ -135,13 +135,13 @@ def test_base_url_override_sets_sdk_base_url_and_placeholder_api_key() -> None:
 
 
 def test_base_url_override_is_absent_when_env_is_missing() -> None:
-    from agentos_runner.sdk_auth import resolve_base_url_override
+    from curie_runner.sdk_auth import resolve_base_url_override
 
     assert resolve_base_url_override({}) is None
 
 
 def test_base_url_override_is_absent_when_env_is_empty() -> None:
-    from agentos_runner.sdk_auth import BASE_URL_ENV, resolve_base_url_override
+    from curie_runner.sdk_auth import BASE_URL_ENV, resolve_base_url_override
 
     assert resolve_base_url_override({BASE_URL_ENV: ""}) is None
 
@@ -229,7 +229,7 @@ def test_zhipu_non_sk_key_forwarded() -> None:
 
 
 def test_model_base_url_alias_selects_override() -> None:
-    # AGENTOS_MODEL_BASE_URL (AGENTOS_-namespaced alias) drives the same seam.
+    # CURIE_MODEL_BASE_URL (CURIE_-namespaced alias) drives the same seam.
     env = {MODEL_BASE_URL_ENV: DEEPSEEK_BASE_URL, CREDENTIALS_ENV: "sk-DEEPSEEK-PLACEHOLDER"}
     override = resolve_sdk_env(env)
     assert override is not None
@@ -274,14 +274,14 @@ def test_bare_sk_still_rejected_without_base_url() -> None:
 
 
 # --- Explicit api_backend wire-protocol enum (#514). Today every endpoint is
-# assumed to speak the Anthropic Messages wire format; AGENTOS_MODEL_API_BACKEND
+# assumed to speak the Anthropic Messages wire format; CURIE_MODEL_API_BACKEND
 # makes that assumption declarable, so an OpenAI-shaped endpoint fails loudly
 # instead of being silently mis-dialed.
 
 
 def test_api_backend_defaults_to_messages_when_unset() -> None:
     # Unset must preserve today's behavior: everything is assumed Messages.
-    from agentos_runner.sdk_auth import resolve_api_backend
+    from curie_runner.sdk_auth import resolve_api_backend
 
     assert resolve_api_backend({}) is ApiBackend.MESSAGES
     assert DEFAULT_API_BACKEND is ApiBackend.MESSAGES
@@ -290,13 +290,13 @@ def test_api_backend_defaults_to_messages_when_unset() -> None:
 def test_api_backend_defaults_to_messages_when_empty_string() -> None:
     # An empty env var is "not declared", not "declared as empty" -- the same
     # empty-string trap the credential path guards against.
-    from agentos_runner.sdk_auth import resolve_api_backend
+    from curie_runner.sdk_auth import resolve_api_backend
 
     assert resolve_api_backend({API_BACKEND_ENV: ""}) is ApiBackend.MESSAGES
 
 
 def test_api_backend_explicit_messages() -> None:
-    from agentos_runner.sdk_auth import resolve_api_backend
+    from curie_runner.sdk_auth import resolve_api_backend
 
     assert resolve_api_backend({API_BACKEND_ENV: "messages"}) is ApiBackend.MESSAGES
 
@@ -305,19 +305,19 @@ def test_api_backend_explicit_messages() -> None:
 def test_api_backend_parsing_is_case_insensitive_and_trims(raw: str) -> None:
     # Config authors hand-write this value; casing and stray whitespace must not
     # turn a valid backend into a hard failure.
-    from agentos_runner.sdk_auth import resolve_api_backend
+    from curie_runner.sdk_auth import resolve_api_backend
 
     assert resolve_api_backend({API_BACKEND_ENV: raw}) is ApiBackend.MESSAGES
 
 
 def test_api_backend_chat_completions() -> None:
-    from agentos_runner.sdk_auth import resolve_api_backend
+    from curie_runner.sdk_auth import resolve_api_backend
 
     assert resolve_api_backend({API_BACKEND_ENV: "chat_completions"}) is ApiBackend.CHAT_COMPLETIONS
 
 
 def test_api_backend_responses() -> None:
-    from agentos_runner.sdk_auth import resolve_api_backend
+    from curie_runner.sdk_auth import resolve_api_backend
 
     assert resolve_api_backend({API_BACKEND_ENV: "responses"}) is ApiBackend.RESPONSES
 
@@ -326,7 +326,7 @@ def test_api_backend_responses() -> None:
 def test_api_backend_unrecognized_value_raises(raw: str) -> None:
     # "chat-completions" (hyphen) is the near-miss spelling of a real member; an
     # unrecognized value must fail loudly rather than silently defaulting.
-    from agentos_runner.sdk_auth import resolve_api_backend
+    from curie_runner.sdk_auth import resolve_api_backend
 
     with pytest.raises(UnsupportedApiBackendError):
         resolve_api_backend({API_BACKEND_ENV: raw})
@@ -348,11 +348,11 @@ def test_speaks_anthropic_wire(backend: ApiBackend, speaks: bool) -> None:
 
 def test_api_backend_members_have_expected_wire_values() -> None:
     # The enum is a wire contract; its string values are what config authors put
-    # in AGENTOS_MODEL_API_BACKEND.
+    # in CURIE_MODEL_API_BACKEND.
     assert ApiBackend.MESSAGES == "messages"
     assert ApiBackend.CHAT_COMPLETIONS == "chat_completions"
     assert ApiBackend.RESPONSES == "responses"
-    assert API_BACKEND_ENV == "AGENTOS_MODEL_API_BACKEND"
+    assert API_BACKEND_ENV == "CURIE_MODEL_API_BACKEND"
 
 
 @pytest.mark.parametrize("backend", ["chat_completions", "responses"])
@@ -414,9 +414,9 @@ def test_openrouter_credential_survives_explicit_messages_backend() -> None:
     assert env[API_KEY_ENV] != NO_OP_API_KEY
 
 
-# --- env_key as string-or-array (#514). AGENTOS_MODEL_ENV_KEY declares which env
+# --- env_key as string-or-array (#514). CURIE_MODEL_ENV_KEY declares which env
 # var(s) carry the credential, so a config author is not forced onto the single
-# hardcoded AGENTOS_CREDENTIALS name.
+# hardcoded CURIE_CREDENTIALS name.
 
 
 def test_parse_env_keys_bare_string_is_one_element_tuple() -> None:
@@ -449,7 +449,7 @@ def test_parse_env_keys_invalid_raises(raw: str) -> None:
 def test_resolve_credential_env_keys_defaults_when_unset() -> None:
     assert resolve_credential_env_keys({}) == DEFAULT_CREDENTIAL_ENV_KEYS
     assert DEFAULT_CREDENTIAL_ENV_KEYS == (CREDENTIALS_ENV,)
-    assert MODEL_ENV_KEY_ENV == "AGENTOS_MODEL_ENV_KEY"
+    assert MODEL_ENV_KEY_ENV == "CURIE_MODEL_ENV_KEY"
 
 
 def test_resolve_credential_env_keys_defaults_when_empty_string() -> None:
@@ -490,16 +490,16 @@ def test_resolve_credential_returns_empty_when_no_key_matches() -> None:
     assert resolve_credential(env) == ""
 
 
-def test_resolve_credential_defaults_to_agentos_credentials() -> None:
-    # Byte-identical-to-today guard: with no AGENTOS_MODEL_ENV_KEY declared, the
-    # credential still comes from AGENTOS_CREDENTIALS.
+def test_resolve_credential_defaults_to_curie_credentials() -> None:
+    # Byte-identical-to-today guard: with no CURIE_MODEL_ENV_KEY declared, the
+    # credential still comes from CURIE_CREDENTIALS.
     assert resolve_credential({CREDENTIALS_ENV: "sk-ant-PLACEHOLDER"}) == "sk-ant-PLACEHOLDER"
 
 
 def test_resolve_sdk_env_sources_credential_from_custom_env_key_array() -> None:
     # End-to-end: the two features compose. A credential sourced from a custom
     # env_key array routes to ANTHROPIC_API_KEY exactly as it would from
-    # AGENTOS_CREDENTIALS.
+    # CURIE_CREDENTIALS.
     env = {
         MODEL_ENV_KEY_ENV: f'["{ALT_TOKEN_KEY}","{MY_CRED_KEY}"]',
         MY_CRED_KEY: "sk-ant-PLACEHOLDER",
@@ -517,24 +517,24 @@ def test_resolve_sdk_env_default_env_key_path_unchanged() -> None:
 
 
 # --- env_key targeting fence (#514 hardening). resolve_credential walks whatever
-# names AGENTOS_MODEL_ENV_KEY hands it, but the runner boot env is shared: it also
-# carries the platform's own AGENTOS_-namespaced vars, including the scoped HMAC
+# names CURIE_MODEL_ENV_KEY hands it, but the runner boot env is shared: it also
+# carries the platform's own CURIE_-namespaced vars, including the scoped HMAC
 # state tokens (ADR-0033) the runner authenticates to the state API with. Naming
 # one of those as a credential source under a base-URL override would forward it
 # to a third-party endpoint as x-api-key -- a secret-exfiltration primitive. The
-# platform's own boot vars are never a model credential, so an AGENTOS_-prefixed
+# platform's own boot vars are never a model credential, so a CURIE_-prefixed
 # target is either a mistake or an attack, and the runner refuses either way.
-# AGENTOS_CREDENTIALS is the one exception: it IS the canonical credential name.
+# CURIE_CREDENTIALS is the one exception: it IS the canonical credential name.
 # The existing reserved_env fence guards the name a connector secret may DECLARE;
 # this one guards the name an env_key may TARGET. Different direction, both needed.
 
 # Platform boot-env var NAMES the fence must refuse. Hoisted to named constants
 # because the secrets pre-commit hook false-positives on inline *_TOKEN / *_KEY
 # literals; these are variable names, never values.
-MEMORY_TOKEN_KEY = "AGENTOS_MEMORY_TOKEN"
-HISTORY_TOKEN_KEY = "AGENTOS_HISTORY_TOKEN"
-RUNNER_TOKEN_KEY = "AGENTOS_RUNNER_TOKEN"
-BUDGET_KEY = "AGENTOS_BUDGET"
+MEMORY_TOKEN_KEY = "CURIE_MEMORY_TOKEN"
+HISTORY_TOKEN_KEY = "CURIE_HISTORY_TOKEN"
+RUNNER_TOKEN_KEY = "CURIE_RUNNER_TOKEN"
+BUDGET_KEY = "CURIE_BUDGET"
 # An obvious fake placeholder standing in for a scoped state token's VALUE.
 FAKE_STATE_TOKEN_VALUE = "PLACEHOLDER-not-a-real-state-token"
 
@@ -542,27 +542,27 @@ FAKE_STATE_TOKEN_VALUE = "PLACEHOLDER-not-a-real-state-token"
 @pytest.mark.parametrize(
     "name", [MEMORY_TOKEN_KEY, HISTORY_TOKEN_KEY, RUNNER_TOKEN_KEY, BUDGET_KEY]
 )
-def test_parse_env_keys_rejects_agentos_prefixed_target(name: str) -> None:
+def test_parse_env_keys_rejects_curie_prefixed_target(name: str) -> None:
     # The state tokens are the exfiltration targets; the budget stands in for the
-    # rest of the AGENTOS_ boot namespace (refs, ids) -- none is a credential.
+    # rest of the CURIE_ boot namespace (refs, ids) -- none is a credential.
     with pytest.raises(InvalidEnvKeyError):
         parse_env_keys(f'["{name}"]')
 
 
-def test_parse_env_keys_rejects_agentos_prefixed_bare_string_target() -> None:
+def test_parse_env_keys_rejects_curie_prefixed_bare_string_target() -> None:
     # The fence applies to BOTH input forms; the bare-string path must not be a
     # way around the array-form check.
     with pytest.raises(InvalidEnvKeyError):
         parse_env_keys(RUNNER_TOKEN_KEY)
 
 
-def test_parse_env_keys_allows_agentos_credentials_target() -> None:
-    # The one allowed AGENTOS_ name: it is the canonical credential var, and it is
+def test_parse_env_keys_allows_curie_credentials_target() -> None:
+    # The one allowed CURIE_ name: it is the canonical credential var, and it is
     # already the default, so declaring it explicitly must stay legal.
     assert parse_env_keys(f'["{CREDENTIALS_ENV}"]') == (CREDENTIALS_ENV,)
 
 
-def test_parse_env_keys_allows_agentos_credentials_bare_string() -> None:
+def test_parse_env_keys_allows_curie_credentials_bare_string() -> None:
     assert parse_env_keys(CREDENTIALS_ENV) == (CREDENTIALS_ENV,)
 
 
@@ -578,7 +578,7 @@ def test_parse_env_keys_one_bad_name_poisons_the_whole_declaration() -> None:
 
 def test_parse_env_keys_still_allows_provider_native_names() -> None:
     # Sourcing from a provider-native var is the whole point of the feature; the
-    # issue's own cited example (grok-build) is exactly this pair. Non-AGENTOS_
+    # issue's own cited example (grok-build) is exactly this pair. Non-CURIE_
     # names must stay allowed or the fence has eaten the feature.
     assert parse_env_keys('["ANTHROPIC_AUTH_TOKEN","LC_ANTHROPIC_AUTH_TOKEN"]') == (
         "ANTHROPIC_AUTH_TOKEN",
@@ -586,11 +586,11 @@ def test_parse_env_keys_still_allows_provider_native_names() -> None:
     )
 
 
-def test_parse_env_keys_still_allows_a_bare_non_agentos_name() -> None:
+def test_parse_env_keys_still_allows_a_bare_non_curie_name() -> None:
     assert parse_env_keys("MY_PROVIDER_KEY") == ("MY_PROVIDER_KEY",)
 
 
-def test_resolve_credential_env_keys_rejects_agentos_prefixed_target() -> None:
+def test_resolve_credential_env_keys_rejects_curie_prefixed_target() -> None:
     # The fence is reachable through the env-facing resolver, not only through the
     # parser it delegates to.
     with pytest.raises(InvalidEnvKeyError):

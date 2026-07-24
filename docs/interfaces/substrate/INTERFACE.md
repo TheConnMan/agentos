@@ -10,8 +10,8 @@ order: 1
 ---
 # INTERFACE: Substrate / SandboxClient
 
-> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+> Part of the Curie swappable-seam catalog — see the [seam index](../../interfaces.md).
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 2 (k8s, docker) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 <!-- END GENERATED: header -->
 
@@ -23,27 +23,27 @@ The substrate is where a conversation thread claims, dials, suspends, and reaps 
 
 ## Current contract
 
-A second implementation must satisfy the `SandboxClient` `Protocol` at `apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient`, six methods:
+A second implementation must satisfy the `SandboxClient` `Protocol` at `apps/worker/src/curie_worker/sandbox/types.py::SandboxClient`, six methods:
 
-- `create_claim(name, *, pool, env=None, labels=None) -> None` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.create_claim`)
-- `get_claim(name) -> ClaimView | None` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.get_claim`)
-- `delete_claim(name) -> None` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.delete_claim`)
-- `list_claims(*, label_selector) -> list[ClaimView]` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.list_claims`)
-- `get_sandbox(name) -> SandboxView | None` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.get_sandbox`)
-- `set_sandbox_mode(name, mode: OperatingMode) -> None` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxClient.set_sandbox_mode`)
+- `create_claim(name, *, pool, env=None, labels=None) -> None` (`apps/worker/src/curie_worker/sandbox/types.py::SandboxClient.create_claim`)
+- `get_claim(name) -> ClaimView | None` (`apps/worker/src/curie_worker/sandbox/types.py::SandboxClient.get_claim`)
+- `delete_claim(name) -> None` (`apps/worker/src/curie_worker/sandbox/types.py::SandboxClient.delete_claim`)
+- `list_claims(*, label_selector) -> list[ClaimView]` (`apps/worker/src/curie_worker/sandbox/types.py::SandboxClient.list_claims`)
+- `get_sandbox(name) -> SandboxView | None` (`apps/worker/src/curie_worker/sandbox/types.py::SandboxClient.get_sandbox`)
+- `set_sandbox_mode(name, mode: OperatingMode) -> None` (`apps/worker/src/curie_worker/sandbox/types.py::SandboxClient.set_sandbox_mode`)
 
-The exchanged value types are `ClaimView` (`apps/worker/src/agentos_worker/sandbox/types.py::ClaimView`: `name`, `ready`, `sandbox_name`) and `SandboxView` (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxView`: `name`, `ready`, `service_fqdn`, `operating_mode`, `port`). `operating_mode` must report `"Running"` for a claim to be handed back (`apps/worker/src/agentos_worker/sandbox/substrate.py::SandboxSubstrate.claim`), and `OperatingMode` is `Literal["Running", "Suspended"]` (`apps/worker/src/agentos_worker/sandbox/types.py::OperatingMode`). The selector reads `AGENTOS_SANDBOX_SUBSTRATE` (default `"kubernetes"`, else `"docker"`) in `_sandbox_client()` at `apps/worker/src/agentos_worker/run.py::_sandbox_client`, which branches on the value inside that same function.
+The exchanged value types are `ClaimView` (`apps/worker/src/curie_worker/sandbox/types.py::ClaimView`: `name`, `ready`, `sandbox_name`) and `SandboxView` (`apps/worker/src/curie_worker/sandbox/types.py::SandboxView`: `name`, `ready`, `service_fqdn`, `operating_mode`, `port`). `operating_mode` must report `"Running"` for a claim to be handed back (`apps/worker/src/curie_worker/sandbox/substrate.py::SandboxSubstrate.claim`), and `OperatingMode` is `Literal["Running", "Suspended"]` (`apps/worker/src/curie_worker/sandbox/types.py::OperatingMode`). The selector reads `CURIE_SANDBOX_SUBSTRATE` (default `"kubernetes"`, else `"docker"`) in `_sandbox_client()` at `apps/worker/src/curie_worker/run.py::_sandbox_client`, which branches on the value inside that same function.
 
 ## Implementations today
 
-Two, both under `apps/worker/src/agentos_worker/sandbox/`:
+Two, both under `apps/worker/src/curie_worker/sandbox/`:
 
-- `KubernetesSandboxClient` (`apps/worker/src/agentos_worker/sandbox/k8s.py::KubernetesSandboxClient`) — drives agent-sandbox CRDs (`Sandbox` in `agents.x-k8s.io`, `SandboxClaim` in `extensions.agents.x-k8s.io`) via `CustomObjectsApi`.
-- `DockerSandboxClient` (`apps/worker/src/agentos_worker/sandbox/docker.py::DockerSandboxClient`) — boots runner containers on the local Docker daemon for middle mode (a laptop, no cluster).
+- `KubernetesSandboxClient` (`apps/worker/src/curie_worker/sandbox/k8s.py::KubernetesSandboxClient`) — drives agent-sandbox CRDs (`Sandbox` in `agents.x-k8s.io`, `SandboxClaim` in `extensions.agents.x-k8s.io`) via `CustomObjectsApi`.
+- `DockerSandboxClient` (`apps/worker/src/curie_worker/sandbox/docker.py::DockerSandboxClient`) — boots runner containers on the local Docker daemon for middle mode (a laptop, no cluster).
 
 ## Known leakage
 
-The `SandboxView.port` field (`apps/worker/src/agentos_worker/sandbox/types.py::SandboxView`) exists only because the Docker path publishes each runner on its own loopback host port, while the Kubernetes path uses one fleet-wide `runner_port`; `None` means "fall back to `SubstrateConfig.runner_port`". Credential handling also differs across the line: the k8s client strips `AGENTOS_CREDENTIALS` (`apps/worker/src/agentos_worker/sandbox/k8s.py::CREDENTIALS_ENV`) from per-claim env so it is never persisted in plaintext on the claim (`apps/worker/src/agentos_worker/sandbox/k8s.py::KubernetesSandboxClient.create_claim`), relying on the chart Secret's `secretKeyRef`; the Docker client has no Secret and forwards at most one model credential by name (`apps/worker/src/agentos_worker/sandbox/docker.py::DockerSandboxClient.create_claim`), across three states -- nothing at all for a fake-model run, which authenticates against nothing; an explicit non-empty AGENTOS_CREDENTIALS alone (never an ambient CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY that would shadow it), kept even under a base-URL override because the runner routes an `sk-or-` OpenRouter key into ANTHROPIC_API_KEY behind a preset base URL (`runner/src/agentos_runner/sdk_auth.py::resolve_sdk_env`); otherwise the ambient SDK credentials, each only when present and only absent a base-URL override, since a local endpoint needs no real Anthropic token. That three-state rule is frozen as data in `tests/vectors/model-credential-forwarding.json` and asserted from both the Python worker lane and the Rust CLI lane, so a change to it fails in two places. These are runtime-shaped asymmetries the `Protocol` does not fully hide.
+The `SandboxView.port` field (`apps/worker/src/curie_worker/sandbox/types.py::SandboxView`) exists only because the Docker path publishes each runner on its own loopback host port, while the Kubernetes path uses one fleet-wide `runner_port`; `None` means "fall back to `SubstrateConfig.runner_port`". Credential handling also differs across the line: the k8s client strips `CURIE_CREDENTIALS` (`apps/worker/src/curie_worker/sandbox/k8s.py::CREDENTIALS_ENV`) from per-claim env so it is never persisted in plaintext on the claim (`apps/worker/src/curie_worker/sandbox/k8s.py::KubernetesSandboxClient.create_claim`), relying on the chart Secret's `secretKeyRef`; the Docker client has no Secret and forwards at most one model credential by name (`apps/worker/src/curie_worker/sandbox/docker.py::DockerSandboxClient.create_claim`), across three states -- nothing at all for a fake-model run, which authenticates against nothing; an explicit non-empty CURIE_CREDENTIALS alone (never an ambient CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY that would shadow it), kept even under a base-URL override because the runner routes an `sk-or-` OpenRouter key into ANTHROPIC_API_KEY behind a preset base URL (`runner/src/curie_runner/sdk_auth.py::resolve_sdk_env`); otherwise the ambient SDK credentials, each only when present and only absent a base-URL override, since a local endpoint needs no real Anthropic token. That three-state rule is frozen as data in `tests/vectors/model-credential-forwarding.json` and asserted from both the Python worker lane and the Rust CLI lane, so a change to it fails in two places. These are runtime-shaped asymmetries the `Protocol` does not fully hide.
 
 ## Cross-links
 

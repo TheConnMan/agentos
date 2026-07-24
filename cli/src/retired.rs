@@ -4,7 +4,7 @@
 pub fn retired_hint(args: &[String]) -> Option<String> {
     if args.iter().any(|arg| arg == "--local") {
         return Some(
-            "`--local` was retired in favor of the local target. Use `agentos local message` for compose stack turns and `agentos local deploy` for local API deploys.".to_string(),
+            "`--local` was retired in favor of the local target. Use `curie local message` for compose stack turns and `curie local deploy` for local API deploys.".to_string(),
         );
     }
 
@@ -34,36 +34,36 @@ pub fn retired_hint(args: &[String]) -> Option<String> {
     let token = args.get(index)?.as_str();
     match token {
         "init" | "skill" | "local" | "cluster" | "-h" | "--help" | "-V" | "--version" => None,
-        "start" => Some("`agentos start` was retired. Use `agentos skill up`.".to_string()),
-        "stop" => Some("`agentos stop` was retired. Use `agentos skill down`.".to_string()),
+        "start" => Some("`curie start` was retired. Use `curie skill up`.".to_string()),
+        "stop" => Some("`curie stop` was retired. Use `curie skill down`.".to_string()),
         "send" => {
-            Some("`agentos send` was retired. Use `agentos skill message`.".to_string())
+            Some("`curie send` was retired. Use `curie skill message`.".to_string())
         }
         "runner-status" => Some(
-            "`agentos runner-status` was retired. Use `agentos skill status`.".to_string(),
+            "`curie runner-status` was retired. Use `curie skill status`.".to_string(),
         ),
-        "eval" => Some("`agentos eval` was retired. Use `agentos skill eval`.".to_string()),
+        "eval" => Some("`curie eval` was retired. Use `curie skill eval`.".to_string()),
         "chat" => {
-            Some("`agentos chat` was retired. Use `agentos local message`.".to_string())
+            Some("`curie chat` was retired. Use `curie local message`.".to_string())
         }
-        "up" => Some("`agentos up` was retired. Use `agentos cluster up`.".to_string()),
+        "up" => Some("`curie up` was retired. Use `curie cluster up`.".to_string()),
         "down" => {
-            Some("`agentos down` was retired. Use `agentos cluster down`.".to_string())
+            Some("`curie down` was retired. Use `curie cluster down`.".to_string())
         }
         "status" => Some(
-            "`agentos status` was retired. Use `agentos cluster status`.".to_string(),
+            "`curie status` was retired. Use `curie cluster status`.".to_string(),
         ),
         "message" => Some(
-            "`agentos message` was retired. Use `agentos cluster message`.".to_string(),
+            "`curie message` was retired. Use `curie cluster message`.".to_string(),
         ),
         "deploy" => Some(
-            "`agentos deploy` was retired. Use `agentos cluster deploy`.".to_string(),
+            "`curie deploy` was retired. Use `curie cluster deploy`.".to_string(),
         ),
         "steer" => Some(
-            "`agentos steer` was removed. Start a new turn with `agentos skill message` instead.".to_string(),
+            "`curie steer` was removed. Start a new turn with `curie skill message` instead.".to_string(),
         ),
         "interrupt" => Some(
-            "`agentos interrupt` was removed. Use Ctrl-C to stop the current CLI process, then restart with `agentos skill message` if you need a new turn.".to_string(),
+            "`curie interrupt` was removed. Use Ctrl-C to stop the current CLI process, then restart with `curie skill message` if you need a new turn.".to_string(),
         ),
         _ => None,
     }

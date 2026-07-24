@@ -1,15 +1,15 @@
 [package]
-name = "agentos"
+name = "curie"
 version = "0.4.3"
 edition = "2021"
-description = "AgentOS CLI: init/start/send/eval a plugin against a local runner (task I1)"
+description = "Curie CLI: init/start/send/eval a plugin against a local runner (task I1)"
 
 [[bin]]
-name = "agentos"
+name = "curie"
 path = "src/main.rs"
 
 [dependencies]
-agentos-aci-protocol = { path = "../packages/aci-protocol/generated/rust" }
+curie-aci-protocol = { path = "../packages/aci-protocol/generated/rust" }
 anstream = "1"
 anstyle = "1"
 anstyle-query = "1"
@@ -76,7 +76,7 @@ jsonschema = { version = "0.48", default-features = false }
 tempfile = "3"
 # The frozen ACI types are a normal dependency of the lib, but integration test
 # crates need them by name to build a SessionStatus for the status_json contract.
-agentos-aci-protocol = { path = "../packages/aci-protocol/generated/rust" }
+curie-aci-protocol = { path = "../packages/aci-protocol/generated/rust" }
 # AST parse of cli/src/api.rs for the --json field-parity gate (#691): resolve
 # serde rename/skip/flatten and derive spellings exactly. `full` parses fn
 # bodies, `visit` recurses into fn/impl-body items (the method-local BundleFiles),

@@ -1,0 +1,73 @@
+# Runtime-E2E trimming overlay for scripts/chart-runtime-e2e.sh.
+#
+# COMPOSES WITH values-e2e-nogvisor.yaml (apply BOTH, nogvisor first):
+#   helm install <rel> charts/curie -n <ns> --create-namespace --no-hooks \
+#     -f charts/curie/values-e2e-nogvisor.yaml \
+#     -f charts/curie/values-e2e-harness.yaml
+#
+# Purpose: stand up the SMALLEST slice of the chart that can exercise the
+# agent-sandbox bundle-fetch init pair against a real MinIO -- the runtime path
+# the #56 credential-isolation fix lives in. It disables every backing store and
+# app service that the bundle-fetch/runner path does not need (langfuse,
+# postgres, valkey, clickhouse, inference, otel collector, api, dispatcher,
+# worker, ui) and both install-time preflights, keeping ONLY MinIO (the bundle
+# store) and the agent-sandbox substrate (the SandboxTemplate whose podTemplate
+# the harness renders into a bound Pod).
+#
+# The vendored controller is OFF: the harness builds the bound sandbox Pod
+# directly from the SandboxTemplate.spec.podTemplate, so it never needs the
+# controller to bind a claim. warmPool.replicas 0 (no pre-warmed pods) and
+# fakeModel true (no model credential) keep the slice credential-free and fast.
+
+# Backing stores the bundle-fetch/runner path does not touch.
+langfuse:
+  deploy: false
+postgres:
+  deploy: false
+valkey:
+  deploy: false
+clickhouse:
+  deploy: false
+inference:
+  deploy: false
+otelCollector:
+  deploy: false
+
+# First-party app services -- none are needed to exec a bound sandbox runner.
+api:
+  deploy: false
+dispatcher:
+  deploy: false
+worker:
+  deploy: false
+ui:
+  deploy: false
+
+# Install-time preflights: skipped anyway with --no-hooks, disabled here so a
+# hooks-on install of this overlay also stays quiet.
+preflights:
+  avxCheck:
+    enabled: false
+  networkPolicyProbe:
+    enabled: false
+
+# MinIO is the bundle store under test. Keep it deployed; drop the PVC so the
+# pod schedules instantly on a scratch node with no storage provisioning wait.
+minio:
+  deploy: true
+  persistence:
+    enabled: false
+
+# Agent-sandbox substrate: keep the SandboxTemplate, skip the cluster-scoped
+# controller (already present, and the harness binds the pod itself), keep zero
+# warm replicas, and run fake-model so no model credential is required.
+agentSandbox:
+  deploy: true
+  controller:
+    deploy: false
+  warmPool:
+    replicas: 0
+  runner:
+    fakeModel: true
+    prewarm:
+      enabled: false

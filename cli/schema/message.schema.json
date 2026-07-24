@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/message/v1.json",
-  "title": "agentos local|cluster message --json",
-  "description": "The agent-facing payload of `agentos local message --json` and `agentos cluster message --json`. Exactly one of four terminal-state shapes is emitted per invocation: a reply object (the model's final reply text, the thread the turn ran under, and whether a reply was captured), an awaiting-approval object (the turn parked on a human approval gate), a timeout object (no reply captured before the deadline), or a dry-run descriptor (what a real run would enqueue). All keys are CLI-owned and locked.",
+  "$id": "https://schemas.curietech.ai/cli/message/v1.json",
+  "title": "curie local|cluster message --json",
+  "description": "The agent-facing payload of `curie local message --json` and `curie cluster message --json`. Exactly one of four terminal-state shapes is emitted per invocation: a reply object (the model's final reply text, the thread the turn ran under, and whether a reply was captured), an awaiting-approval object (the turn parked on a human approval gate), a timeout object (no reply captured before the deadline), or a dry-run descriptor (what a real run would enqueue). All keys are CLI-owned and locked.",
   "oneOf": [
     {
       "title": "reply",

@@ -1,7 +1,7 @@
 {
   "name": "compat-fixture",
   "version": "0.1.0",
-  "description": "Not a runnable agent: a plugin-compat gate fixture that carries all five AgentOS authoring extensions (systemPrompt, starterPrompts, secrets, triggers, approvalPolicy) so `claude plugin validate` exercises the warn-and-ignore degradation contract for every one of them (#538). A dedicated fixture keeps these fields off the real example bundles, where approvalPolicy and systemPrompt would change runtime behavior for no functional benefit.",
+  "description": "Not a runnable agent: a plugin-compat gate fixture that carries all five Curie authoring extensions (systemPrompt, starterPrompts, secrets, triggers, approvalPolicy) so `claude plugin validate` exercises the warn-and-ignore degradation contract for every one of them (#538). A dedicated fixture keeps these fields off the real example bundles, where approvalPolicy and systemPrompt would change runtime behavior for no functional benefit.",
   "author": { "name": "CurieTech" },
   "keywords": ["fixture", "plugin-compat", "extensions"],
   "systemPrompt": "You are a compatibility fixture; you are never actually run.",

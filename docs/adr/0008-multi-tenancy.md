@@ -5,7 +5,7 @@ Status: Accepted
 
 ## Context
 
-AgentOS is single-tenant by construction today, which is correct for the
+Curie is single-tenant by construction today, which is correct for the
 self-host case: one install is one company. The vision (grow the way Supabase and
 PostHog did) also calls for a hosted offering where many customer companies share
 our infrastructure. That is multi-tenancy, and it carries an absolute constraint:
@@ -20,7 +20,7 @@ gVisor, non-root / read-only-rootfs, per-run budgets. So the gap is the control
 plane, not the runtime isolation.
 
 This ADR records the load-bearing decisions. The build path is tracked in epic
-[#158](https://github.com/curie-eng/agentos/issues/158) (stones #151-157); this is
+[#158](https://github.com/curie-eng/curie/issues/158) (stones #151-157); this is
 the "why + when", not the roadmap. There is no prototype evidence behind it yet
 (unlike the MVP-era ADRs); it is a forward decision, and if implementation proves
 part of it wrong, a superseding ADR records the drift.
@@ -61,7 +61,7 @@ part of it wrong, a superseding ADR records the drift.
 6. **Control plane is API-first: the CLI is the complete, authoritative surface
    (verbs, not scripts); the UI wraps the same API and becomes primary over time;
    a self-serve signup page is far future.** Parity between the two surfaces is
-   enforced by the `agentos schema` manifest + CI gate (#145).
+   enforced by the `curie schema` manifest + CI gate (#145).
 
 **The tenant-boundary invariant** (what we test and review to): every data
 read/write, storage key, credential fetch, sandbox claim, and trace query is

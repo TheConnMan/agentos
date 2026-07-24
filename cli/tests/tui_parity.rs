@@ -1,7 +1,7 @@
 //! Parity gate between the TUI recipe catalog and the live CLI grammar.
 //!
 //! What it does: execs each Command recipe's argv (with placeholder field
-//! values) plus `--help` against the built `agentos` binary and asserts it
+//! values) plus `--help` against the built `curie` binary and asserts it
 //! resolves, mirroring the manifest gate in `command_surface.rs`.
 //!
 //! What it catches: a recipe pointing at a renamed or removed verb, or
@@ -19,10 +19,10 @@
 
 use std::process::Command;
 
-use agentos::recipes::command_recipe_argvs;
+use curie::recipes::command_recipe_argvs;
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_agentos")
+    env!("CARGO_BIN_EXE_curie")
 }
 
 fn run_help(argv: &[String]) -> std::process::Output {
@@ -30,7 +30,7 @@ fn run_help(argv: &[String]) -> std::process::Output {
         .args(argv)
         .arg("--help")
         .output()
-        .expect("run agentos --help")
+        .expect("run curie --help")
 }
 
 fn output_text(output: &std::process::Output) -> String {

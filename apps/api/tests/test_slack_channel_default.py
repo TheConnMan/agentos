@@ -2,7 +2,7 @@
 
 Regression guard for #341: the CLI shipped `#local-dev` as its default channel,
 which the API's own AgentCreate validator rejects with 422, so
-`agentos local deploy` with no --slack-channel failed on a fresh stack. This test
+`curie local deploy` with no --slack-channel failed on a fresh stack. This test
 reads the real Rust const and runs it through the real API validator so the two
 literals cannot drift back apart across the language boundary.
 """
@@ -10,7 +10,7 @@ literals cannot drift back apart across the language boundary.
 import re
 from pathlib import Path
 
-from agentos_api.schemas import _validate_slack_channel_id
+from curie_api.schemas import _validate_slack_channel_id
 
 _API_RS = Path(__file__).resolve().parents[3] / "cli" / "src" / "api.rs"
 _DEFAULT_RE = re.compile(r'DEFAULT_SLACK_CHANNEL:\s*&str\s*=\s*"([^"]*)"')

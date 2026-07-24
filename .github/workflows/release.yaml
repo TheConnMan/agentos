@@ -3,7 +3,7 @@ name: Release images and binaries
 # Two triggers, one workflow, so a single ref carries both artifacts:
 #  - push to main            -> publish images tagged sha + latest (continuous).
 #  - push a v* tag           -> publish images tagged with the version AND build,
-#                               strip, and attach the agentos CLI binaries to a
+#                               strip, and attach the curie CLI binaries to a
 #                               GitHub Release with generated notes.
 #
 # IMAGE SCOPE NOTE: all five first-party images are built here -- the runner
@@ -132,7 +132,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ghcr.io/${{ github.repository_owner }}/agentos-${{ matrix.name }}
+          images: ghcr.io/${{ github.repository_owner }}/curie-${{ matrix.name }}
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -141,7 +141,7 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          tags: ghcr.io/${{ github.repository_owner }}/agentos-${{ matrix.name }}
+          tags: ghcr.io/${{ github.repository_owner }}/curie-${{ matrix.name }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
@@ -194,7 +194,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ghcr.io/${{ github.repository_owner }}/agentos-${{ matrix.name }}
+          images: ghcr.io/${{ github.repository_owner }}/curie-${{ matrix.name }}
           tags: |
             type=sha,format=long
             type=raw,value=latest,enable={{is_default_branch}}
@@ -205,10 +205,10 @@ jobs:
         run: |
           # shellcheck disable=SC2046  # intentional word-splitting: expand -t <tag> flags and the digest ref list into separate args
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf 'ghcr.io/${{ github.repository_owner }}/agentos-${{ matrix.name }}@sha256:%s ' *)
+            $(printf 'ghcr.io/${{ github.repository_owner }}/curie-${{ matrix.name }}@sha256:%s ' *)
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/agentos-${{ matrix.name }}:${{ steps.meta.outputs.version }}
+          docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/curie-${{ matrix.name }}:${{ steps.meta.outputs.version }}
 
   worker-local-build:
     name: Build worker-local overlay (${{ matrix.platform }})
@@ -252,7 +252,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ghcr.io/${{ github.repository_owner }}/agentos-worker-local
+          images: ghcr.io/${{ github.repository_owner }}/curie-worker-local
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -263,7 +263,7 @@ jobs:
           build-args: |
             BASE_TAG=${{ steps.ver.outputs.v }}
           labels: ${{ steps.meta.outputs.labels }}
-          tags: ghcr.io/${{ github.repository_owner }}/agentos-worker-local
+          tags: ghcr.io/${{ github.repository_owner }}/curie-worker-local
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=worker-local-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=worker-local-${{ matrix.arch }}
@@ -306,7 +306,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ghcr.io/${{ github.repository_owner }}/agentos-worker-local
+          images: ghcr.io/${{ github.repository_owner }}/curie-worker-local
           tags: |
             type=sha,format=long
             type=raw,value=latest,enable={{is_default_branch}}
@@ -317,13 +317,13 @@ jobs:
         run: |
           # shellcheck disable=SC2046  # intentional word-splitting: expand -t <tag> flags and the digest ref list into separate args
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf 'ghcr.io/${{ github.repository_owner }}/agentos-worker-local@sha256:%s ' *)
+            $(printf 'ghcr.io/${{ github.repository_owner }}/curie-worker-local@sha256:%s ' *)
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/agentos-worker-local:${{ steps.meta.outputs.version }}
+          docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/curie-worker-local:${{ steps.meta.outputs.version }}
 
   cli-binaries:
-    name: Build agentos CLI (${{ matrix.target }})
+    name: Build curie CLI (${{ matrix.target }})
     needs: [authorize-release]
     # See build's identical condition above: proceed on the tag path only once
     # authorize-release has actually succeeded (not merely been skipped).
@@ -363,14 +363,14 @@ jobs:
       - name: Build release
         working-directory: cli
         env:
-          AGENTOS_BUILD_CHANNEL: release
+          CURIE_BUILD_CHANNEL: release
         run: cargo build --release --target ${{ matrix.target }}
       - name: Strip and name the binary
         run: |
-          bin="cli/target/${{ matrix.target }}/release/agentos"
+          bin="cli/target/${{ matrix.target }}/release/curie"
           strip "$bin" || true
           mkdir -p dist
-          cp "$bin" "dist/agentos-${{ matrix.target }}"
+          cp "$bin" "dist/curie-${{ matrix.target }}"
       # Cataloged from Cargo.lock, not the stripped binary: the lockfile is what
       # actually names every crate that went in, and stripping removes the symbols
       # a binary scan would need. Scanning the cli/ tree instead would also drag in
@@ -380,16 +380,16 @@ jobs:
         with:
           file: cli/Cargo.lock
           format: spdx-json
-          output-file: dist/agentos-${{ matrix.target }}.spdx.json
+          output-file: dist/curie-${{ matrix.target }}.spdx.json
           upload-artifact: false
           upload-release-assets: false
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:
-          name: agentos-${{ matrix.target }}
+          name: curie-${{ matrix.target }}
           path: |
-            dist/agentos-${{ matrix.target }}
-            dist/agentos-${{ matrix.target }}.spdx.json
+            dist/curie-${{ matrix.target }}
+            dist/curie-${{ matrix.target }}.spdx.json
           if-no-files-found: error
 
   chart:
@@ -410,7 +410,7 @@ jobs:
         run: |
           version="${{ steps.ver.outputs.v }}"
           mkdir -p dist
-          helm package charts/agentos --version "$version" --app-version "$version" -d dist
+          helm package charts/curie --version "$version" --app-version "$version" -d dist
       - name: Generate and stage the release compose
         run: |
           version="${{ steps.ver.outputs.v }}"
@@ -418,15 +418,15 @@ jobs:
           python3 compose/generate_release_compose.py --version "${version}" > dist/compose.release.yaml
       # The chart and the compose file are deployment manifests, so these SBOMs
       # inventory the packaged artifact itself. The dependency graph of what they
-      # pin lives in the agentos-* images, which do NOT carry SBOMs or provenance
+      # pin lives in the curie-* images, which do NOT carry SBOMs or provenance
       # today -- that is #62, still open. Do not read this as coverage existing
       # elsewhere; it does not yet.
       - name: Generate the chart SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          file: dist/agentos-${{ steps.ver.outputs.v }}.tgz
+          file: dist/curie-${{ steps.ver.outputs.v }}.tgz
           format: spdx-json
-          output-file: dist/agentos-${{ steps.ver.outputs.v }}.tgz.spdx.json
+          output-file: dist/curie-${{ steps.ver.outputs.v }}.tgz.spdx.json
           upload-artifact: false
           upload-release-assets: false
       - name: Generate the compose SBOM
@@ -440,15 +440,15 @@ jobs:
       - name: Upload chart artifact
         uses: actions/upload-artifact@v7
         with:
-          name: agentos-chart
+          name: curie-chart
           path: |
-            dist/agentos-*.tgz
-            dist/agentos-*.tgz.spdx.json
+            dist/curie-*.tgz
+            dist/curie-*.tgz.spdx.json
           if-no-files-found: error
       - name: Upload release compose artifact
         uses: actions/upload-artifact@v7
         with:
-          name: agentos-compose
+          name: curie-compose
           path: |
             dist/compose.release.yaml
             dist/compose.release.yaml.spdx.json
@@ -472,7 +472,7 @@ jobs:
       - name: Download built binaries
         uses: actions/download-artifact@v8
         with:
-          pattern: agentos-*
+          pattern: curie-*
           path: dist
           merge-multiple: true
       - name: Resolve version

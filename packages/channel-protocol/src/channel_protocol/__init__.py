@@ -1,4 +1,4 @@
-"""Rendering-neutral messages shared by AgentOS channel adapters."""
+"""Rendering-neutral messages shared by Curie channel adapters."""
 
 from .models import (
     MESSAGE_VERSION,

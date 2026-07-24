@@ -1,7 +1,7 @@
 # Operating the `cluster` target
 
-This doc is the runbook for the **`cluster`** target: the AgentOS platform
-running on a Kubernetes cluster (a Helm release). The same `agentos` binary
+This doc is the runbook for the **`cluster`** target: the Curie platform
+running on a Kubernetes cluster (a Helm release). The same `curie` binary
 installs and runs it, wrapping the umbrella Helm chart the way `linkerd` or
 `cilium` wrap theirs. Every verb takes `--dry-run` to print the exact
 `helm`/`kubectl` command line (secrets masked) without executing.
@@ -26,18 +26,18 @@ front of the identical runner and ACI. For the `skill` and `local` targets see
 
 Prerequisites: `kubectl` and `helm` on PATH, pointed at a reachable cluster
 (the `agents.x-k8s.io` Agent Sandbox CRDs and a NetworkPolicy-enforcing CNI are
-installed by the chart's preflights; see `charts/agentos/README.md`).
+installed by the chart's preflights; see `charts/curie/README.md`).
 
 ## Install and inspect
 
-- `agentos cluster up` runs `helm upgrade --install` using the chart resolved
+- `curie cluster up` runs `helm upgrade --install` using the chart resolved
   from the version-pinned release asset by default, so a downloaded release
   binary needs no repo checkout. Pass `--chart <path-or-tgz>` to override with a
   local chart for chart development. For local development, override resolved
   artifacts with `-f <compose>`, `--chart <path-or-tgz>`, and `--image <ref>`.
-  It installs into the `agentos` namespace, exposing the UI and Langfuse on node
+  It installs into the `curie` namespace, exposing the UI and Langfuse on node
   ports (pass `--no-expose` to keep them ClusterIP-only). It reads
-  `AGENTOS_CREDENTIALS` (deprecated alias `AGENTOS_MODEL_CREDENTIALS`): when the env var is set it switches the runner
+  `CURIE_CREDENTIALS` (deprecated alias `CURIE_MODEL_CREDENTIALS`): when the env var is set it switches the runner
   off the fake model and forwards the credential through the masked `--set`
   machinery (so `--dry-run` never prints it); when it is absent the release
   installs sealed (canned replies) and `up` warns that replies stay canned
@@ -66,7 +66,7 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
   to each declared CIDR for skill/tool web access or for a destination no named
   provider covers; omit both flags and egress stays sealed. This is the platform
   enablement the weather example (#36) needs, whose skill answers via a live web
-  search: `agentos cluster up --allow-web-egress 0.0.0.0/0` opens the open
+  search: `curie cluster up --allow-web-egress 0.0.0.0/0` opens the open
   internet (still minus the `169.254.169.254` metadata endpoint the chart carves
   out of `0.0.0.0/0`), or narrow the CIDR to a specific web-search provider for a
   tighter posture. When a declared value is a default route (`0.0.0.0/0`, `::/0`,
@@ -80,12 +80,12 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
   `--set 'security.networkPolicy.allowedEgress[0].cidr=0.0.0.0/0'` plus
   `...[0].ports[0].protocol=TCP` and `...[0].ports[0].port=443`; shift the index
   up by one for each preceding `--allow-egress-host` entry so the array has no gap.
-- `agentos cluster status` reports release health, pod readiness, and the access URLs;
+- `curie cluster status` reports release health, pod readiness, and the access URLs;
   the UI URL carries `?api=1`, so it opens wired to the in-cluster API (the
   deployed UI proxies `/api/` there).
-- `agentos cluster down` uninstalls the release and deletes only the namespaces
+- `curie cluster down` uninstalls the release and deletes only the namespaces
   this release created, identified by the ownership label `up` stamped on them
-  (`agentos.dev/created-by=<release>`); pre-existing (unlabeled) namespaces and
+  (`curietech.ai/created-by=<release>`); pre-existing (unlabeled) namespaces and
   the `agents.x-k8s.io` CRDs are left untouched. It prompts before deleting
   unless `--yes` is passed. If `helm uninstall` fails (for example a transient
   API-server blip), teardown does not abort: the ownership-scoped namespace
@@ -103,10 +103,10 @@ installed by the chart's preflights; see `charts/agentos/README.md`).
 
 ## Connecting Slack
 
-Use `agentos cluster comms --slack` to wire a real Slack workspace onto the
+Use `curie cluster comms --slack` to wire a real Slack workspace onto the
 release. It is a thin `helm upgrade --reuse-values` wrapper that sets the
 dispatcher's app and bot tokens and, on connect, clears
-`worker.slackApiBaseUrl=` to un-wire any `agentos cluster message` stub routing.
+`worker.slackApiBaseUrl=` to un-wire any `curie cluster message` stub routing.
 After the upgrade it also restarts and waits for the worker (and, on connect,
 the dispatcher) so the running pods pick up the changed tokens, since a
 Secret change alone does not roll pods whose token comes from a
@@ -117,13 +117,13 @@ Connect:
 ```bash
 SLACK_APP_TOKEN=xapp-... \
 SLACK_BOT_TOKEN=xoxb-... \
-agentos cluster comms --slack
+curie cluster comms --slack
 ```
 
 Disconnect:
 
 ```bash
-agentos cluster comms --slack --disconnect
+curie cluster comms --slack --disconnect
 ```
 
 Dry run:
@@ -131,7 +131,7 @@ Dry run:
 ```bash
 SLACK_APP_TOKEN=xapp-... \
 SLACK_BOT_TOKEN=xoxb-... \
-agentos cluster comms --slack --dry-run
+curie cluster comms --slack --dry-run
 ```
 
 The env-backed token values are masked in dry-run output and are never printed
@@ -139,7 +139,7 @@ in full.
 
 ### Local compose comms
 
-Use `agentos local comms --slack` to wire the compose stack to a real Slack
+Use `curie local comms --slack` to wire the compose stack to a real Slack
 workspace. It reads `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`, masks both values
 in printed commands, starts the dispatcher, and points the worker at real
 Slack.
@@ -147,18 +147,18 @@ Slack.
 Disconnect:
 
 ```bash
-agentos local comms --slack --disconnect
+curie local comms --slack --disconnect
 ```
 
 Disconnect stops the dispatcher and restores the local Slack stub so
-`agentos local message` keeps working.
+`curie local message` keeps working.
 
 Dry run:
 
 ```bash
 SLACK_APP_TOKEN=xapp-... \
 SLACK_BOT_TOKEN=xoxb-... \
-agentos local comms --slack --dry-run
+curie local comms --slack --dry-run
 ```
 
 Dry run prints the compose command with masked token values and does not change
@@ -166,26 +166,26 @@ the stack.
 
 ## Deploy a bundle to the cluster
 
-Before `agentos cluster message` can drive an agent, a bundle must be deployed to
-the in-cluster platform API with `agentos cluster deploy`. Per ADR-0057, with no
+Before `curie cluster message` can drive an agent, a bundle must be deployed to
+the in-cluster platform API with `curie cluster deploy`. Per ADR-0057, with no
 `--api-url`, `cluster deploy` self-plumbs a `kubectl port-forward` to
 `svc/<release>-api` (a loopback tunnel) and dials `http://localhost:<port>` --
 no manual port-forward and no UI NodePort proxy involved:
 
 ```bash
-agentos cluster deploy --plugin-dir <bundle-dir>
+curie cluster deploy --plugin-dir <bundle-dir>
 ```
 
-With no `--api-key`/`AGENTOS_API_KEY` either, the key is auto-discovered by
+With no `--api-key`/`CURIE_API_KEY` either, the key is auto-discovered by
 reading `api.apiKey` out of the release's `<release>-secrets` Secret (decoded
 server-side, so the plaintext never lands in argv); the discovered key travels
 only in the `X-API-Key` header over the loopback tunnel, never over the
 cleartext UI `/api` NodePort proxy that ADR-0024 used for this path. Pass
-`--api-key` explicitly (or set `AGENTOS_API_KEY`) to override discovery with
+`--api-key` explicitly (or set `CURIE_API_KEY`) to override discovery with
 your own key.
 
 An explicit `--api-url` (e.g. `http://<node>:30080/api`, ADR-0024's UI proxy
-still available as the escape hatch) or `AGENTOS_API_URL` direct-dials the given
+still available as the escape hatch) or `CURIE_API_URL` direct-dials the given
 URL exactly as given, with no tunnel. If the auto-discovered key would then
 travel over plain `http://`, `cluster deploy` refuses rather than leak it on the
 wire -- pass `--api-key` explicitly to acknowledge, use an `https://` URL, or
@@ -193,15 +193,15 @@ omit `--api-url` to go back over the loopback tunnel.
 
 Key discovery fails with a usage error telling you to pass `--api-key` when the
 release's `<release>-secrets` Secret cannot be read. The port-forward itself
-fails with a hint to check `agentos cluster status` if the release is not
+fails with a hint to check `curie cluster status` if the release is not
 healthy.
 
-Without a deploy, `agentos cluster message` fails with `no agents are deployed on
+Without a deploy, `curie cluster message` fails with `no agents are deployed on
 the platform API`.
 
 ## Driving a deployed cluster with zero Slack
 
-`agentos cluster message "..."` exercises a deployed release end to end with no Slack
+`curie cluster message "..."` exercises a deployed release end to end with no Slack
 at all: it stands up a local Slack API stub, self-manages the kubectl
 port-forwards, resolves the target agent's channel from the API, points the
 deployed worker at the stub (`helm upgrade --reuse-values`), enqueues the exact
@@ -214,13 +214,13 @@ reference and the multi-turn `--thread` flow are in
 
 ## Bridging to the local dev stack
 
-`agentos local up|down|status` wraps the local compose stack. A no checkout
+`curie local up|down|status` wraps the local compose stack. A no checkout
 release binary uses the pinned `compose.release.yaml` release asset, while repo
 development still uses `compose.dev.yaml`, so the inner loop and the cluster
 share one CLI. `local up` brings up the full product stack (API + worker
 alongside the backing stores, plus the console UI at
 `http://localhost:28080/?api=1`), so
-`agentos local deploy --api-url http://localhost:28000` then `agentos local message
+`curie local deploy --api-url http://localhost:28000` then `curie local message
 "..."` drives a real queue -> worker -> sandboxed runner -> reply roundtrip with
 no Slack and no Kubernetes. See the middle-mode runbook in the
 [README](../README.md#quickstart).

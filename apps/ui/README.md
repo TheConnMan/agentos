@@ -1,6 +1,6 @@
 # apps/ui
 
-The AgentOS console: Vite + React + TypeScript, no meta-framework. Design tokens
+The Curie console: Vite + React + TypeScript, no meta-framework. Design tokens
 and every view are ported from the design canon (the original design mockup).
 This is the UI shell, backed by the live API: every view fetches from `apps/api`.
 Surfaces without a backend yet render honest "Coming Soon" stubs rather than
@@ -109,7 +109,7 @@ plainly what is not wired yet rather than showing fictional data.
 - The API key is `?api_key=` else `VITE_API_KEY` else the dev default; sent as
   `X-API-Key`.
 - All calls go to the same-origin `/api` prefix. `vite.config.ts` proxies `/api`
-  to `AGENTOS_API_TARGET` (default `http://localhost:8000`), stripping the
+  to `CURIE_API_TARGET` (default `http://localhost:8000`), stripping the
   prefix. This avoids CORS: apps/api has no CORS middleware, so the browser must
   reach it same-origin.
 
@@ -131,8 +131,8 @@ apps/api on 8000:
 ```bash
 # apply the schema once
 (cd ../api && uv run alembic upgrade head)
-# run uvicorn in another shell: (cd ../api && uv run uvicorn agentos_api.main:app --port 8000)
-PW_INTEGRATION=1 AGENTOS_API_TARGET=http://localhost:8000 pnpm exec playwright test --project=integration
+# run uvicorn in another shell: (cd ../api && uv run uvicorn curie_api.main:app --port 8000)
+PW_INTEGRATION=1 CURIE_API_TARGET=http://localhost:8000 pnpm exec playwright test --project=integration
 ```
 
 The integration spec (`e2e/integration/`) seeds a real OTLP trace

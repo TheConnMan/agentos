@@ -16,7 +16,7 @@ A small team cannot maintain a bespoke telemetry datastore, eval engine, queue, 
 
 ## Decision
 
-**Build only:** the web UI, the API server (agents/versions/deployments + git-flow), the Slack dispatcher, the worker+runner glue, the `agentos` CLI, and the umbrella Helm chart.
+**Build only:** the web UI, the API server (agents/versions/deployments + git-flow), the Slack dispatcher, the worker+runner glue, the `curie` CLI, and the umbrella Helm chart.
 
 **Adopt** (all license-verified): Langfuse (traces + evals, MIT core — ADR 0004), Kubernetes Agent Sandbox (interactive runner substrate — ADR 0002), Slack Bolt (Socket Mode, MIT), claude-agent-sdk (harness — ADR 0005), BullMQ + Valkey (queue), vanilla Postgres (app state), OTel Collector, and the Claude Code plugin format verbatim (the distribution wedge — do not invent a format).
 

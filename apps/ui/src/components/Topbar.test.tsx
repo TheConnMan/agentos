@@ -17,7 +17,7 @@ vi.mock("../api/client", async (importOriginal) => {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getAgents).mockResolvedValue([]);
-  vi.mocked(getConfig).mockResolvedValue({ org_name: "AgentOS" });
+  vi.mocked(getConfig).mockResolvedValue({ org_name: "Curie" });
 });
 
 // Surfaces the store's env state so assertions do not depend on pill styling.

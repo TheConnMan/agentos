@@ -1,6 +1,6 @@
 """Unit tests for the observation-tree reconstruction (no I/O)."""
 
-from agentos_api.langfuse import build_tree
+from curie_api.langfuse import build_tree
 
 
 def _observations() -> list[dict[str, object]]:

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/versions/v1.json",
-  "title": "agentos <tier> versions --json",
-  "description": "The agent-facing payload of `agentos <tier> versions <agent>`: the dry-run plan, or the agent's versions newest-first (an empty array when none exist).",
+  "$id": "https://schemas.curietech.ai/cli/versions/v1.json",
+  "title": "curie <tier> versions --json",
+  "description": "The agent-facing payload of `curie <tier> versions <agent>`: the dry-run plan, or the agent's versions newest-first (an empty array when none exist).",
   "$defs": {
     "dryRun": {
       "type": "object",

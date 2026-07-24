@@ -1,7 +1,7 @@
 """Fixtures and import wiring for the soak suite.
 
 The cluster-touching fixtures (``substrate``, ``pool_ready``) are only requested
-by the gated scenario in ``test_soak_resilience.py``; when ``AGENTOS_SOAK`` is
+by the gated scenario in ``test_soak_resilience.py``; when ``CURIE_SOAK`` is
 unset that module skips at collection time via its own ``pytestmark`` and these
 fixtures never run, so the suite stays clean offline. The pure-helper unit tests
 request none of these fixtures and always run.
@@ -28,8 +28,8 @@ from harness import SoakConfig, kubectl  # noqa: E402
 # opt-in gate at the package level (module markers on conftest do not propagate,
 # so the real guard lives in test_soak_resilience.py).
 pytestmark = pytest.mark.skipif(
-    os.environ.get("AGENTOS_SOAK") != "1",
-    reason="soak/chaos suite; set AGENTOS_SOAK=1 with a standing cluster + dev stack",
+    os.environ.get("CURIE_SOAK") != "1",
+    reason="soak/chaos suite; set CURIE_SOAK=1 with a standing cluster + dev stack",
 )
 
 
@@ -48,7 +48,7 @@ def substrate(cfg: SoakConfig) -> Iterator[object]:
     """
 
     import redis
-    from agentos_worker.sandbox import (
+    from curie_worker.sandbox import (
         AffinityStore,
         KubernetesSandboxClient,
         SandboxSubstrate,
@@ -61,7 +61,7 @@ def substrate(cfg: SoakConfig) -> Iterator[object]:
         password=cfg.valkey_password,
     )
     client.ping()
-    prefix = "soak:agentos:sandbox"
+    prefix = "soak:curie:sandbox"
     config = SubstrateConfig(
         namespace=cfg.namespace,
         warm_pool=cfg.pool,

@@ -1,6 +1,6 @@
 """End-to-end proof of the sandbox substrate against a real cluster.
 
-Gated: runs only with ``AGENTOS_SANDBOX_E2E=1`` plus a reachable cluster
+Gated: runs only with ``CURIE_SANDBOX_E2E=1`` plus a reachable cluster
 (``KUBECONFIG``) that has the agent-sandbox controller+extensions, the chart's
 sandbox resources installed (``agentSandbox.deploy=true``), and the runner
 image imported. Asserts the full G1 lifecycle against real machinery:
@@ -11,7 +11,7 @@ image imported. Asserts the full G1 lifecycle against real machinery:
 3. consecutive turns land on the SAME pod/process (the cache-affinity
    invariant the substrate owns: no rebind between turns),
 4. suspend deletes the pod; resume creates a NEW claim whose pod carries
-   ``AGENTOS_HISTORY_REF`` (the cold-restart rehydrate path, asserted from
+   ``CURIE_HISTORY_REF`` (the cold-restart rehydrate path, asserted from
    the injected env + a fresh healthy runner),
 5. release deletes claim, sandbox, and pod (the reap path).
 
@@ -32,7 +32,7 @@ from collections.abc import Iterator
 
 import pytest
 import redis
-from agentos_worker.sandbox import (
+from curie_worker.sandbox import (
     HISTORY_ENV,
     AffinityStore,
     KubernetesSandboxClient,
@@ -42,14 +42,14 @@ from agentos_worker.sandbox import (
 )
 
 pytestmark = pytest.mark.skipif(
-    os.environ.get("AGENTOS_SANDBOX_E2E") != "1",
-    reason="cluster e2e; set AGENTOS_SANDBOX_E2E=1 with KUBECONFIG + chart installed",
+    os.environ.get("CURIE_SANDBOX_E2E") != "1",
+    reason="cluster e2e; set CURIE_SANDBOX_E2E=1 with KUBECONFIG + chart installed",
 )
 
-NAMESPACE = os.environ.get("AGENTOS_SANDBOX_E2E_NAMESPACE", "agentos-g1")
-# Matches what the chart renders for release agentos-g1 (fullname collapses the
+NAMESPACE = os.environ.get("CURIE_SANDBOX_E2E_NAMESPACE", "curie-g1")
+# Matches what the chart renders for release curie-g1 (fullname collapses the
 # repeated chart name): <fullname>-runner-pool.
-POOL = os.environ.get("AGENTOS_SANDBOX_E2E_POOL", "agentos-g1-runner-pool")
+POOL = os.environ.get("CURIE_SANDBOX_E2E_POOL", "curie-g1-runner-pool")
 
 
 def _kubectl(*args: str) -> str:
@@ -114,7 +114,7 @@ def substrate() -> Iterator[SandboxSubstrate]:
         password=os.environ.get("TEST_VALKEY_PW", "valkeypass") or None,
     )
     client.ping()
-    prefix = "e2e:agentos:sandbox"
+    prefix = "e2e:curie:sandbox"
     config = SubstrateConfig(
         namespace=NAMESPACE,
         warm_pool=POOL,
@@ -175,7 +175,7 @@ def test_full_lifecycle_on_cluster(substrate: SandboxSubstrate) -> None:
     print(f"EVIDENCE same_pod_across_turns uid={uid_before}")
 
     # 4. Suspend deletes the pod; resume rehydrates via a fresh claim with
-    #    AGENTOS_HISTORY_REF injected.
+    #    CURIE_HISTORY_REF injected.
     substrate.suspend(thread, history_ref="e2e-history-ref-123")
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:

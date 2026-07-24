@@ -8,7 +8,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 # The bundle whose manifest carries the string-pointer mcpServers form the real
 # Claude Code loader silently ignores (#336). Owned by runner/, read-only here:
 # it exists to be rejected, and #540 makes plugin_format a second, static gate on
-# it so `agentos skill check` (which boots a container to observe it) is no longer
+# it so `curie skill check` (which boots a container to observe it) is no longer
 # the only one.
 _RED_POINTER = Path(__file__).parents[3] / "runner" / "tests" / "fixtures" / "mcp_red_pointer"
 
@@ -178,13 +178,13 @@ def test_non_env_var_secret_name_is_rejected(tmp_path: Path) -> None:
     assert "secrets.name_invalid" in _codes(bundle)
 
 
-def test_reserved_agentos_secret_name_is_rejected(tmp_path: Path) -> None:
-    # AGENTOS_* names are reserved platform boot-env keys.
-    bundle = _bundle(tmp_path, '{"name": "demo", "secrets": ["AGENTOS_BUDGET"]}')
+def test_reserved_curie_secret_name_is_rejected(tmp_path: Path) -> None:
+    # CURIE_* names are reserved platform boot-env keys.
+    bundle = _bundle(tmp_path, '{"name": "demo", "secrets": ["CURIE_BUDGET"]}')
     assert "secrets.name_reserved" in _codes(bundle)
 
 
-# The four runner-owned credential keys are NOT AGENTOS_-prefixed, so the #445
+# The four runner-owned credential keys are NOT CURIE_-prefixed, so the #445
 # prefix fence never saw them: a bundle could declare `ANTHROPIC_BASE_URL` and
 # silently redirect the model. #457 rejects them at the same deploy gate.
 _RESERVED_CREDENTIAL_KEYS = [
@@ -309,7 +309,7 @@ def test_bare_mcp_gate_for_declared_server_is_rejected(tmp_path: Path) -> None:
     assert "mcp__plugin_demo_crm__" in message
     # And it must point at the escape hatch for a live name the bundle
     # does not declare, rather than dead-ending the author.
-    assert "AGENTOS_APPROVAL_REQUIRED_TOOLS" in message
+    assert "CURIE_APPROVAL_REQUIRED_TOOLS" in message
 
 
 def test_builtin_tool_gate_passes(tmp_path: Path) -> None:

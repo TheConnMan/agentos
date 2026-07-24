@@ -4,8 +4,8 @@ Date: 2026-07-22
 
 Status: Accepted
 
-Implements [#249](https://github.com/curie-eng/agentos/issues/249) (part of the
-[#23](https://github.com/curie-eng/agentos/issues/23) durable workflow-state store epic).
+Implements [#249](https://github.com/curie-eng/curie/issues/249) (part of the
+[#23](https://github.com/curie-eng/curie/issues/23) durable workflow-state store epic).
 
 ## Context
 
@@ -13,7 +13,7 @@ The durable workflow-state store shipped under #248: the API state router over
 Postgres JSONB (`/agents/{id}/state/{namespace}/{key}`), with get / put-CAS /
 list / delete / append. Memory (#264) and conversation history (#20) already
 consume it as two fixed namespaces, each through a runner-local loader that
-dereferences an `AGENTOS_*_REF` URL with a scoped `state` token (ADR-0033).
+dereferences a `CURIE_*_REF` URL with a scoped `state` token (ADR-0033).
 
 What was still missing (#249) is a way for a *bundle skill* to read and write
 general workflow state across a suspend/resume cycle. Without a platform-provided
@@ -27,28 +27,28 @@ problem ADR-0003 already answers.
 Expose the existing store to bundle code two ways, adding no new datastore and no
 new credential.
 
-**An auto-mounted `agentos-state` MCP server.** The runner wires an in-process
+**An auto-mounted `curie-state` MCP server.** The runner wires an in-process
 SDK MCP server into every real session, exactly as it already does for the
 approval-request server (ADR-0010): `build_state_server`
-(`runner/src/agentos_runner/state.py`) carries get / set / list / delete / append
+(`runner/src/curie_runner/state.py`) carries get / set / list / delete / append
 tools that map one-to-one onto the router verbs. A skill calls
-`mcp__agentos-state__*`; the backing is Postgres JSONB outside the sandbox, so the
+`mcp__curie-state__*`; the backing is Postgres JSONB outside the sandbox, so the
 data survives the cold-pod suspend/resume of ADR-0003 for free. `memory` and
 `transcript` are reserved namespaces: the tools refuse them client-side for a
 fast, legible error, and the API refuses them for the bundle's token server-side
 (below) so the refusal cannot be bypassed by calling the store directly.
 
-**An `AGENTOS_STATE_URL` / `AGENTOS_STATE_TOKEN` boot-env pair** for a bundle
+**A `CURIE_STATE_URL` / `CURIE_STATE_TOKEN` boot-env pair** for a bundle
 script that talks to the store directly (a shell or python step, not the model).
 Both are declared `BootEnv` fields (#488, ADR-0049), produced by the worker
 binding per claim under the same closed-world contract that governs every other
-`AGENTOS_*` var, so the name is typed once and a rename cannot silently drop the
-feature. `AGENTOS_STATE_URL` is the agent's state namespace base
+`CURIE_*` var, so the name is typed once and a rename cannot silently drop the
+feature. `CURIE_STATE_URL` is the agent's state namespace base
 (`.../agents/<id>/state`); a `<namespace>/<key>` is composed onto it.
 
 **Two scoped tokens, one reserved-namespace boundary.** The reserved namespaces
 are load-bearing, so the guarantee must hold against a bundle that skips the tool
-and calls `AGENTOS_STATE_URL` directly with the token it was handed. The memory
+and calls `CURIE_STATE_URL` directly with the token it was handed. The memory
 and history loaders and the bundle reach *different* namespaces, so they get
 *different* tokens (both ADR-0033 signed derivatives of `api_key`, bound to this
 agent, never the platform key, never logged, both `X-API-Key`):
@@ -56,7 +56,7 @@ agent, never the platform key, never logged, both `X-API-Key`):
 - the memory/history loaders keep the broad `state` scope, which the router
   accepts on every namespace -- they MUST read and write `memory`/`transcript`
   to rehydrate the agent across suspend/resume;
-- `AGENTOS_STATE_TOKEN` is a narrower `state.app` scope, which the router refuses
+- `CURIE_STATE_TOKEN` is a narrower `state.app` scope, which the router refuses
   (403) on the reserved namespaces (`forbid_reserved_namespace` in
   `apps/api/.../routers/state.py`). Because the bundle only ever holds the narrow
   token, the reserved-namespace rule is enforced where the authority actually
@@ -91,7 +91,7 @@ schema, wire lock, and generated Rust/TypeScript are regenerated from the model.
   set (`RESERVED_NAMESPACES`) AND the runner tool's client-side set, which are two
   byte-mirrored literals, or a skill could clobber it.
 - **Residual, honestly scoped.** The broad `state` token backing the loaders is
-  still an env var (`AGENTOS_MEMORY_TOKEN`/`AGENTOS_HISTORY_TOKEN`) inside the
+  still an env var (`CURIE_MEMORY_TOKEN`/`CURIE_HISTORY_TOKEN`) inside the
   same sandbox as bundle code, and it cannot be scrubbed after boot because the
   ports write memory/transcript *during* the turn. So a bundle that deliberately
   scrapes another env var can still reach the reserved namespaces. This is

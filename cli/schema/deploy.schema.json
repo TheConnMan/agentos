@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/deploy/v1.json",
-  "title": "agentos <tier> deploy --json",
-  "description": "The agent-facing payload of `agentos local deploy` / `agentos cluster deploy`: the deployed agent, version, channel, bundle, and deployment summary.",
+  "$id": "https://schemas.curietech.ai/cli/deploy/v1.json",
+  "title": "curie <tier> deploy --json",
+  "description": "The agent-facing payload of `curie local deploy` / `curie cluster deploy`: the deployed agent, version, channel, bundle, and deployment summary.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

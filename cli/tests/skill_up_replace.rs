@@ -3,7 +3,7 @@
 //! The flag exists to recover a bundle whose recorded runner is in the way. Two
 //! ways that recovery can make things worse, both pinned here:
 //!
-//! 1. Clearing `.agentos/runner.json` BEFORE the run can still abort leaves the
+//! 1. Clearing `.curie/runner.json` BEFORE the run can still abort leaves the
 //!    old runner alive and now untracked, which is the un-stoppable orphan the
 //!    ticket exists to remove.
 //! 2. Tearing down only the runner container forgets the `--local-model`
@@ -16,10 +16,10 @@
 
 use std::process::{Command, Output};
 
-use agentos::state::{self, RunnerState};
+use curie::state::{self, RunnerState};
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_agentos")
+    env!("CARGO_BIN_EXE_curie")
 }
 
 fn err_str(o: &Output) -> String {
@@ -38,14 +38,14 @@ fn bundle_with_recorded_runner(with_local_model: bool) -> (tempfile::TempDir, Ru
         .arg(dir.path().join("bundle"))
         .stdin(std::process::Stdio::null())
         .output()
-        .expect("run agentos init");
+        .expect("run curie init");
     assert!(init.status.success(), "scaffold bundle: {}", err_str(&init));
 
-    let name = format!("agentos-747-replace-{}", std::process::id());
+    let name = format!("curie-747-replace-{}", std::process::id());
     let recorded = RunnerState {
         container_id: "deadbeef0000".into(),
         container_name: name.clone(),
-        image: "agentos-runner".into(),
+        image: "curie-runner".into(),
         port: 7245,
         base_url: "http://localhost:7245".into(),
         session_id: "local-1".into(),
@@ -71,7 +71,7 @@ fn skill_up(dir: &tempfile::TempDir, recorded: &RunnerState, extra: &[&str]) -> 
         ])
         .args(extra)
         .output()
-        .expect("run agentos skill up")
+        .expect("run curie skill up")
 }
 
 /// The record survives a run that aborts before the replacement happens.
@@ -114,7 +114,7 @@ fn replacing_a_recorded_local_model_run_tears_down_its_sidecar_and_network() {
     let out = skill_up(
         &dir,
         &recorded,
-        &["--image", "agentos-runner:747-image-that-does-not-exist"],
+        &["--image", "curie-runner:747-image-that-does-not-exist"],
     );
     let stderr = err_str(&out);
 

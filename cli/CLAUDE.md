@@ -1,7 +1,7 @@
 # CLAUDE.md - cli
 
-The `agentos` CLI: Rust, clap + tokio + reqwest. Speaks only the
-frozen contracts (the generated `agentos-aci-protocol` crate over HTTP/NDJSON,
+The `curie` CLI: Rust, clap + tokio + reqwest. Speaks only the
+frozen contracts (the generated `curie-aci-protocol` crate over HTTP/NDJSON,
 and the platform API's committed `apps/api/openapi.json`) and orchestrates a
 local runner container via Docker. Three command families: `skill` drives a
 plugin against a local runner with `up`, `down`, `status`, `message`, and
@@ -48,7 +48,7 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   TS manifest, and the console's `cliCommand()` hints are typed against it, so a
   stale manifest breaks the UI build. Never edit the manifest by hand.
 - **Never hand-write the ACI types.** `Cargo.toml` depends on
-  `agentos-aci-protocol` at `../packages/aci-protocol/generated/rust` --
+  `curie-aci-protocol` at `../packages/aci-protocol/generated/rust` --
   that crate is generated from the frozen Pydantic models. If a type you
   need is missing, that is a contract gap (raise it in an issue/PR first per
   the root AGENTS.md frozen-contracts rule), not something to redefine locally
@@ -58,25 +58,25 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   Keep `reqwest`'s feature set minimal (`json`, `stream`, `multipart`) --
   adding a feature should come with a reason in the PR, not just convenience.
 - **The queue payload is the frozen `QueuedTurn` contract, not a hand-mirror.**
-  `agentos skill message` talks straight to a local runner container's ACI HTTP
+  `curie skill message` talks straight to a local runner container's ACI HTTP
   surface (`/v1/event`, `/v1/steer`, `/v1/interrupt`), bypassing the
   dispatcher/worker entirely by design (that is the point: zero Slack, zero
   cluster). The `local message` / `cluster message` drivers do enqueue onto the
-  real Valkey Stream, and the payload they mint is `agentos_aci_protocol::QueuedTurn`
+  real Valkey Stream, and the payload they mint is `curie_aci_protocol::QueuedTurn`
   (promoted into `packages/aci-protocol` by issue #7) consumed from the generated
   crate -- never redefine it locally in `cli/src`. `cli/src/queue.rs` owns only the
   Valkey Stream transport of that type (the single-`payload` encoding, the
   `EvSIM-` synthetic ids, the XADD and the ack-based completion signal).
-- **`agentos init` scaffolds the plugin-format shape verbatim.** The
+- **`curie init` scaffolds the plugin-format shape verbatim.** The
   generated bundle (`.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`,
   `.mcp.json`) must stay byte-compatible with what `plugin_format.validate_bundle`
   accepts -- if `packages/plugin-format` changes, this scaffold needs
   updating in the same reviewed change, not independently. `init` also drops a
-  root `AGENTS.md` and a `.claude/skills/using-agentos/SKILL.md` harness primer
+  root `AGENTS.md` and a `.claude/skills/using-curie/SKILL.md` harness primer
   (body rendered from `guide::primer_markdown()`) alongside the bundle; both
   live outside the `plugin_format`-validated `skills/` tree, so they do not
   affect validation. The non-interactive spec-file path
-  (`agentos init --from-spec <path>`, `scaffold::scaffold_from_spec`) produces the
+  (`curie init --from-spec <path>`, `scaffold::scaffold_from_spec`) produces the
   SAME plugin-format-verbatim shape and carries the same byte-compat obligation:
   its `SKILL.md` frontmatter uses `allowed-tools` (never `tools`) and its
   `.mcp.json` servers each define `command` or `url` (as strings). The spec's
@@ -90,14 +90,14 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   than the platform and break parity). The spec's OWN top-level fields stay strict
   (`deny_unknown_fields` on `AgentSpec`/`SkillSpec`).
 - **The `evals/cases.json` seed and `skill eval` loader hand-mirror the frozen
-  eval-case schema.** The `agentos init` seed (`scaffold::eval_cases`) and the
+  eval-case schema.** The `curie init` seed (`scaffold::eval_cases`) and the
   `skill eval` loader (`evals::EvalSuite`/`load_suite`) mirror the frozen
   eval-case schema at `apps/worker/schema/eval-cases.schema.json` and must stay
   byte-compatible with the worker's `EvalSuite` -- the scaffold byte-equality
   test against `apps/worker/schema/eval-cases.example.json` is the enforcement.
   A shape change here lands in the same reviewed change as the Python models,
   not independently.
-- **`skill up` records container state in `.agentos/runner.json`** (gitignored
+- **`skill up` records container state in `.curie/runner.json`** (gitignored
   by the scaffold) so `skill message`/`skill eval`/`skill status`/`skill down` can resolve the
   running container from the bundle directory alone. Do not add a second
   state-tracking file for the same purpose.
@@ -112,10 +112,10 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   package the bundle as
   tar.gz and push to the platform API (find-or-create agent, create version,
   upload bundle, create deployment) authenticated via
-  `--api-key`/`AGENTOS_API_KEY`. The packer skips a fixed set of names
-  (`.agentosignore`, `.agentos`, `.git`, `.venv`, `venv`, `node_modules`,
+  `--api-key`/`CURIE_API_KEY`. The packer skips a fixed set of names
+  (`.curieignore`, `.curie`, `.git`, `.venv`, `venv`, `node_modules`,
   `__pycache__`, `.mypy_cache`, `.pytest_cache`) at any depth plus whatever an
-  optional root `.agentosignore` names (name-only, no globs), and still refuses
+  optional root `.curieignore` names (name-only, no globs), and still refuses
   to pack any symlink that survives those exclusions rather than dereference it.
   `local message`, `local deploy`,
   `cluster message`, `cluster deploy`, and every operator verb
@@ -136,14 +136,14 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   `CmdArg::SecretSet` variant (only a masked prefix is echoed, in dry-run or the
   printed command line) and token flags read from env with `hide_env_values`.
   Never widen a secret to `Plain` or otherwise print it. The `up` model
-  credential (from `AGENTOS_MODEL_CREDENTIALS`) flows through this path.
-  `agentos cluster comms --slack` uses the same `SecretSet` masking for
+  credential (from `CURIE_MODEL_CREDENTIALS`) flows through this path.
+  `curie cluster comms --slack` uses the same `SecretSet` masking for
   `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`, while `--disconnect --dry-run`
   prints only the empty clears. After the helm upgrade it also rolls the
   worker (and, on connect, the dispatcher) via `kubectl rollout restart` +
   `rollout status` so the Secret-backed tokens go live.
 - **`local comms` shares the same Slack flag surface, but tokens travel through
-  compose env, not argv.** `agentos local comms --slack` reads
+  compose env, not argv.** `curie local comms --slack` reads
   `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN`, passes them through a masked
   `secret_env` compose process env channel, and never prints an unmasked token
   in live or dry run output. `--disconnect` clears the real Slack wiring,
@@ -156,7 +156,7 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   workspace's replies.
 - **A new `Deserialize` struct in `cli/src/api.rs` must be declared in
   `cli/api-mirrors.json`** (as a `mirrors` entry with its allowlisted field
-  omissions, or a `non_mirrors` entry with a one-line reason). `agentos dev
+  omissions, or a `non_mirrors` entry with a one-line reason). `curie dev
   field-parity` is the check (#691).
 - **A new `Deserialize` struct in `cli/src/commands.rs` or `cli/src/spec.rs`
   that hand-mirrors the frozen `packages/plugin-format` manifest shape must be
@@ -164,7 +164,7 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   omissions, or `non_mirrors` with a reason) -- this is a SIBLING gate to the
   one above, not the same one: the source of truth here is
   `packages/plugin-format/schema/plugin-format.schema.json`, not
-  `apps/api/openapi.json`, since the two contracts are unrelated. `agentos dev
+  `apps/api/openapi.json`, since the two contracts are unrelated. `curie dev
   field-parity` (`cli/scripts/check-field-parity.sh`) runs both (#701). Beyond
   the mechanical field sweep, `commands::parse_manifest_gates` additionally
   validates a manifest that DECLARES an `approvalPolicy` against the full
@@ -179,7 +179,7 @@ Helm and the deployed release with `up`, `status`, `down`, `comms`, `message`,
   `emits` array** (the `(output, struct)` pair, plus any allowlisted, justified
   field omissions) -- the second, emit-hop seam #691 named but did not close
   (the proof case was `VersionsOutput::to_json` dropping `Version.id`,
-  #699). `agentos dev emit-parity` is the check. Narrower than the struct-level
+  #699). `curie dev emit-parity` is the check. Narrower than the struct-level
   gate: it verifies every DECLARED projection stays honest but, unlike that
   gate's `UndeclaredStruct` check, cannot discover a new projection on its own
   (see `cli/tests/support/emit_parity.rs`'s module doc for why). A `to_json`
@@ -197,15 +197,15 @@ Scripted E2E (real runner container, fake model, fully offline by default):
 ```bash
 bash cli/scripts/e2e.sh
 ```
-Requires the `agentos-runner` image built once from the repo root
-(`docker build -f runner/Dockerfile -t agentos-runner .`) and a cargo
-toolchain (or `$AGENTOS_BIN` pointed at a prebuilt binary, which skips the
-`cargo build --release`). `AGENTOS_E2E_LIVE=1` drops `--fake-model` and runs
+Requires the `curie-runner` image built once from the repo root
+(`docker build -f runner/Dockerfile -t curie-runner .`) and a cargo
+toolchain (or `$CURIE_BIN` pointed at a prebuilt binary, which skips the
+`cargo build --release`). `CURIE_E2E_LIVE=1` drops `--fake-model` and runs
 the skill rung against a real model, requiring a credential
-(`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or `AGENTOS_CREDENTIALS`) in
+(`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or `CURIE_CREDENTIALS`) in
 the environment.
 
-Cold-start parity ladder (issue #690, `agentos dev e2e-ladder` ->
+Cold-start parity ladder (issue #690, `curie dev e2e-ladder` ->
 `cli/scripts/e2e-ladder.sh`) -- an E2E test, same as the scripted E2E above, not
 the falsifiability gate below it. It chains three rungs: rung 1 delegates to
 `e2e.sh` unchanged; rung 2 drives `local up --minimal` -> `local deploy` ->
@@ -215,10 +215,10 @@ release, a real round trip with no manual port-forward. A fourth,
 separately-named `local-release` rung (issue #695) repeats rung 2's exact round
 trip against `compose.release.yaml` instead -- the file
 `compose/generate_release_compose.py` derives from `compose.dev.yaml` and the
-artifact a release binary's `agentos local up` actually runs, one half of the
+artifact a release binary's `curie local up` actually runs, one half of the
 `compose.dev.yaml` / generated-release-compose parity seam (AGENTS.md). It
 generates that file fresh each run, preflights that the release-pinned
-`ghcr.io/curie-eng/agentos-api` and `-worker-local` images already exist
+`ghcr.io/curie-eng/curie-api` and `-worker-local` images already exist
 locally (failing with a fix hint otherwise, since the generated file has no
 build directive to fall back on and a release binary has no checkout to build
 one from), then runs the same `local up --minimal -f compose.release.yaml` ->
@@ -227,14 +227,14 @@ compose.release.yaml` against it. Elsewhere in CI, the `compose` job already
 asserts this generated file parses and renders the right service counts but
 never runs a turn through it -- this rung is the missing half, catching the
 compose-env-wiring bug class (#545) a config-only check cannot.
-`AGENTOS_E2E_TIERS` (default `skill,local`, or `all` for `skill,local,cluster`)
+`CURIE_E2E_TIERS` (default `skill,local`, or `all` for `skill,local,cluster`)
 selects rungs; `local-release` is NOT folded into `all` since it needs those
 extra images built first, so name it explicitly (e.g.
-`skill,local,local-release`). `AGENTOS_E2E_LIVE` (default fake, `1` for live)
+`skill,local,local-release`). `CURIE_E2E_LIVE` (default fake, `1` for live)
 governs every named rung, including rung 1 -- `e2e.sh` reads the same env var
 directly rather than being told by the ladder. One-command pre-release gate:
 ```bash
-AGENTOS_E2E_TIERS=all agentos dev e2e-ladder
+CURIE_E2E_TIERS=all curie dev e2e-ladder
 ```
 
 Falsifiability gate (issue #619) -- a gate, NOT an E2E test: it never runs a real
@@ -242,7 +242,7 @@ agent or makes a model call. Its real-path half boots the FAKE model and asserts
 every committed eval suite goes RED (a case that greens against a do-nothing
 agent is unfalsifiable, #527):
 ```bash
-agentos dev eval-falsifiability   # bash cli/scripts/eval-falsifiability.sh
+curie dev eval-falsifiability   # bash cli/scripts/eval-falsifiability.sh
 ```
 The grader-level half (the `contains: "weather"` input-parrot vacuousness control
 and the known-good-exemplar positive control) rides `cargo test`

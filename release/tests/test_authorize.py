@@ -86,14 +86,14 @@ def check_run(name: str, conclusion: str | None, run_id: str, job_id: str) -> di
     """A check-run shaped like the live API response (issue #732).
 
     `details_url` observed live on this repo:
-    https://github.com/curie-eng/agentos/actions/runs/29811627398/job/88573652086
+    https://github.com/curie-eng/curie/actions/runs/29811627398/job/88573652086
     """
     return {
         "name": name,
         "status": "completed" if conclusion is not None else "in_progress",
         "conclusion": conclusion,
         "details_url": (
-            f"https://github.com/curie-eng/agentos/actions/runs/{run_id}/job/{job_id}"
+            f"https://github.com/curie-eng/curie/actions/runs/{run_id}/job/{job_id}"
         ),
     }
 
@@ -298,7 +298,7 @@ class TestFetchCheckRuns:
 
     `gh api` defaults to GET but switches to POST as soon as any `-f`/`-F`
     flag is present, and `POST /repos/{owner}/{repo}/commits/{sha}/check-runs`
-    does not exist. Verified live against curie-eng/agentos on 2026-07-21 at
+    does not exist. Verified live against curie-eng/curie on 2026-07-21 at
     commit 276774ff: the `-f`-only form returned
     `{"message": "Not Found", "status": "404"}`, while adding `-X GET`
     returned `{"total_count": 42, ...}`. Mocking `gh` here is correct: GitHub
@@ -320,10 +320,10 @@ class TestFetchCheckRuns:
         payload = {"total_count": 1, "check_runs": [CHECK_RUNS_ALL_GREEN[0]]}
         captured = self._capture(monkeypatch, payload)
 
-        runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/agentos")
+        runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/curie")
 
         argv = captured[0]
-        endpoint = "repos/curie-eng/agentos/commits/deadbeef/check-runs"
+        endpoint = "repos/curie-eng/curie/commits/deadbeef/check-runs"
         assert "-X" in argv
         assert argv[argv.index("-X") + 1] == "GET"
         assert argv.index("-X") < argv.index(endpoint)
@@ -367,7 +367,7 @@ class TestFetchCheckRunsPagination:
             authorize_module.subprocess, "run", self._paged_fake_run(pages, total_count=3)
         )
 
-        runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/agentos", per_page=2)
+        runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/curie", per_page=2)
 
         assert [run["name"] for run in runs] == ["CI", "Unrelated", "CodeQL"]
 
@@ -383,7 +383,7 @@ class TestFetchCheckRunsPagination:
             authorize_module.subprocess, "run", self._paged_fake_run(pages, total_count=3)
         )
 
-        runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/agentos", per_page=2)
+        runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/curie", per_page=2)
 
         assert len(runs) == 3
         assert authorize_module.missing_required_checks(runs, TEST_REQUIRED_NAMES) == {
@@ -406,7 +406,7 @@ class TestFetchCheckRunsPagination:
                 authorize_module.subprocess, "run", self._paged_fake_run(pages, total_count=2)
             )
             runs = authorize_module.fetch_check_runs(
-                "deadbeef", "curie-eng/agentos", per_page=1
+                "deadbeef", "curie-eng/curie", per_page=1
             )
 
         authorize_module.authorize(
@@ -422,7 +422,7 @@ class TestFetchCheckRunsPagination:
             authorize_module.subprocess, "run", self._paged_fake_run(pages, total_count=5)
         )
 
-        runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/agentos", per_page=1)
+        runs = authorize_module.fetch_check_runs("deadbeef", "curie-eng/curie", per_page=1)
 
         assert runs == [{"name": "CI", "conclusion": "success"}]
 
@@ -603,7 +603,7 @@ class TestMain:
         monkeypatch.setenv("GITHUB_RUN_ID", CURRENT_RUN_ID)
 
         exit_code = authorize_module.main(
-            [sha, "--repo", "curie-eng/agentos", "--main-ref", "main"]
+            [sha, "--repo", "curie-eng/curie", "--main-ref", "main"]
         )
 
         assert exit_code == 0
@@ -621,7 +621,7 @@ class TestMain:
         monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
 
         exit_code = authorize_module.main(
-            [sha, "--repo", "curie-eng/agentos", "--main-ref", "main"]
+            [sha, "--repo", "curie-eng/curie", "--main-ref", "main"]
         )
 
         assert exit_code == 0
@@ -642,7 +642,7 @@ class TestMain:
         monkeypatch.setenv("GITHUB_RUN_ID", OTHER_RUN_ID)
 
         exit_code = authorize_module.main(
-            [sha, "--repo", "curie-eng/agentos", "--main-ref", "main"]
+            [sha, "--repo", "curie-eng/curie", "--main-ref", "main"]
         )
 
         assert exit_code == 1
@@ -672,7 +672,7 @@ class TestMainLookupFailures:
         monkeypatch.chdir(git_repo)
         monkeypatch.setenv("GITHUB_RUN_ID", CURRENT_RUN_ID)
         return authorize_module.main(
-            [sha, "--repo", "curie-eng/agentos", "--main-ref", "main"]
+            [sha, "--repo", "curie-eng/curie", "--main-ref", "main"]
         )
 
     def test_gh_api_failure_refuses_with_a_message_naming_the_lookup(
@@ -682,7 +682,7 @@ class TestMainLookupFailures:
             monkeypatch,
             subprocess.CalledProcessError(
                 1,
-                ["gh", "api", "-X", "GET", "repos/curie-eng/agentos/commits/x/check-runs"],
+                ["gh", "api", "-X", "GET", "repos/curie-eng/curie/commits/x/check-runs"],
                 stderr="gh: Not Found (HTTP 404)",
             ),
         )

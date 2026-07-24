@@ -1,6 +1,6 @@
 """Per-agent model selection round-trips through the API against real Postgres.
 
-The `model` column is forwarded as AGENTOS_MODEL at sandbox boot by the worker
+The `model` column is forwarded as CURIE_MODEL at sandbox boot by the worker
 (#254); the API's job is to store, expose, and update it. Create-with-model, the
 null default, PATCH-to-set, and PATCH-leaves-unchanged.
 """

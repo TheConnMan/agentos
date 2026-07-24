@@ -1,4 +1,4 @@
-//! Integration (#767, #768): drive the REAL `agentos::ops::down` through fake
+//! Integration (#767, #768): drive the REAL `curie::ops::down` through fake
 //! `helm`/`kubectl` on PATH to prove the fail-forward WIRING that the ops-module
 //! unit tests cannot exercise: the namespace sweep runs UNCONDITIONALLY after a
 //! failed helm uninstall (the core anti-regression, since a revert to `bail!`
@@ -24,8 +24,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use agentos::exit::{classify, ExitClass};
-use agentos::ops::{down, CommonOpts, DownOpts};
+use curie::exit::{classify, ExitClass};
+use curie::ops::{down, CommonOpts, DownOpts};
 
 /// Write `body` to `dir/name` and mark it executable (0o755).
 fn write_exec(dir: &Path, name: &str, body: &str) {
@@ -111,7 +111,7 @@ async fn cluster_down_fails_forward_through_real_down() {
     // P1: a no-json human operator sees the resume command in the message itself.
     let shown = err.to_string();
     assert!(
-        shown.contains("agentos.dev/created-by=prod-release"),
+        shown.contains("curietech.ai/created-by=prod-release"),
         "the human message must carry the label-scoped resume command: {shown}"
     );
 

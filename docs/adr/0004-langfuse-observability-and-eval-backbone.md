@@ -5,7 +5,7 @@ Status: Accepted
 
 ## Context
 
-AgentOS needs traces (the Runs view), an eval store (evals-as-CI, the eval matrix), and per-run version reproducibility — the production-discipline layer that is the product's moat. The candidates were Langfuse (MIT core), SigNoz (MIT, generic OTel), Arize Phoenix (Elastic License 2.0 — disqualified for a managed-service product), promptfoo/DeepEval (no multi-client self-hosted store). The open risk with Langfuse was whether its public API is strong enough to build our own Runs view on, and whether its 4-datastore footprint fits one node.
+Curie needs traces (the Runs view), an eval store (evals-as-CI, the eval matrix), and per-run version reproducibility — the production-discipline layer that is the product's moat. The candidates were Langfuse (MIT core), SigNoz (MIT, generic OTel), Arize Phoenix (Elastic License 2.0 — disqualified for a managed-service product), promptfoo/DeepEval (no multi-client self-hosted store). The open risk with Langfuse was whether its public API is strong enough to build our own Runs view on, and whether its 4-datastore footprint fits one node.
 
 ## Decision
 
@@ -14,7 +14,7 @@ Adopt Langfuse (self-hosted, v3) as the single backbone for both agent traces an
 ## Evidence (live, docker compose, 2026-07-04)
 
 - OTLP-HTTP ingest works; a `model`-bearing span maps to a `GENERATION` observation; the public `observations` API returns populated `parentObservationId` linkage that reconstructs a 3-level `agent.run → generation → tool` tree.
-- Proven again from inside a sandbox: the runner exported nested traces (`service.name=agentos-runner-sandbox`) that reconstructed correctly.
+- Proven again from inside a sandbox: the runner exported nested traces (`service.name=curie-runner-sandbox`) that reconstructed correctly.
 - Footprint measured at **~2.3 GB** for the whole backbone at light load (web 1.28 GB, ClickHouse 453 MiB, rest tiny) — far below the 16-20 GB estimate. ClickHouse is not the memory anchor; the Helm 3-replica/2xlarge default is (override to 1).
 - gRPC OTLP is silently unsupported by Langfuse — HTTP only.
 

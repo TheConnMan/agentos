@@ -2,12 +2,12 @@
 """Generate the self-contained release compose file from compose.dev.yaml.
 
 compose.dev.yaml is the single source of truth for the local stack. The release
-asset (`compose.release.yaml`, shipped to `agentos local up` on a release binary)
+asset (`compose.release.yaml`, shipped to `curie local up` on a release binary)
 must not depend on a repo checkout, so this script derives it from the dev file
 via three ordered text transforms:
 
-  T1  Replace the agentos-worker build overlay (`build: {context, dockerfile}`)
-      with a pinned `image: ghcr.io/curie-eng/agentos-worker-local:latest`, since
+  T1  Replace the curie-worker build overlay (`build: {context, dockerfile}`)
+      with a pinned `image: ghcr.io/curie-eng/curie-worker-local:latest`, since
       the release stack cannot build the worker-local overlay from source.
 
   T2  Inline otel/collector-config.yaml as a top-level `configs:` block (a literal
@@ -15,9 +15,9 @@ via three ordered text transforms:
       does not try to interpolate the collector's own env references), and repoint
       the otel-collector service from the host bind-mount to that config.
 
-  T3  Pin every `ghcr.io/curie-eng/agentos-*:latest` image tag to the release
+  T3  Pin every `ghcr.io/curie-eng/curie-*:latest` image tag to the release
       version (this also pins the worker-local image introduced by T1). Also
-      collapses the `:${AGENTOS_BASE_TAG:-latest}` override form (issue #698)
+      collapses the `:${CURIE_BASE_TAG:-latest}` override form (issue #698)
       to the same literal pin, since the release asset has no shell to resolve
       that override in.
 
@@ -34,17 +34,17 @@ from pathlib import Path
 WORKER_BUILD_BLOCK = """    build:
       context: compose
       dockerfile: worker-local.Dockerfile
-      # Threads AGENTOS_BASE_TAG through to the overlay's own ARG BASE_TAG
+      # Threads CURIE_BASE_TAG through to the overlay's own ARG BASE_TAG
       # (compose/worker-local.Dockerfile), which pins its `FROM
-      # ghcr.io/curie-eng/agentos-worker:${BASE_TAG}` base. Without this the
+      # ghcr.io/curie-eng/curie-worker:${BASE_TAG}` base. Without this the
       # arg was never wired, so the Dockerfile silently fell back to its own
       # `latest` default regardless of what the api/migrate override above was
       # set to. Same variable, same default, so one override can drive all
       # three services uniformly.
       args:
-        BASE_TAG: ${AGENTOS_BASE_TAG:-latest}
+        BASE_TAG: ${CURIE_BASE_TAG:-latest}
 """
-WORKER_IMAGE_LINE = "    image: ghcr.io/curie-eng/agentos-worker-local:latest\n"
+WORKER_IMAGE_LINE = "    image: ghcr.io/curie-eng/curie-worker-local:latest\n"
 
 CONFIGS_ANCHOR = "x-core-profiles: &core_profiles [core, full]"
 
@@ -57,14 +57,14 @@ OTEL_CONFIGS_REF = """    configs:
 """
 
 # Matches the plain `:latest` pin AND compose.dev.yaml's
-# `:${AGENTOS_BASE_TAG:-latest}` override form (issue #698: agentos-api and
-# agentos-migrate's `image:` refs carry the override so CI/local runs can
+# `:${CURIE_BASE_TAG:-latest}` override form (issue #698: curie-api and
+# curie-migrate's `image:` refs carry the override so CI/local runs can
 # repoint them at a locally built tag with no registry auth). The release
 # asset has no shell to resolve that override in, so either form collapses to
 # a plain, literal `:<version>` pin here -- same outcome the dev file's own
 # unset default already produces.
-AGENTOS_LATEST_RE = re.compile(
-    r"(ghcr\.io/curie-eng/agentos-[a-z-]+):(?:latest|\$\{AGENTOS_BASE_TAG:-latest\})"
+CURIE_LATEST_RE = re.compile(
+    r"(ghcr\.io/curie-eng/curie-[a-z-]+):(?:latest|\$\{CURIE_BASE_TAG:-latest\})"
 )
 
 DEV_COMPOSE = Path("compose.dev.yaml")
@@ -78,7 +78,7 @@ def generate(dev_text: str, otel_text: str, version: str) -> str:
     # T1: worker build overlay -> pinned worker-local image.
     if WORKER_BUILD_BLOCK not in text:
         raise ValueError(
-            "T1: agentos-worker build overlay block not found in compose.dev.yaml"
+            "T1: curie-worker build overlay block not found in compose.dev.yaml"
         )
     text = text.replace(WORKER_BUILD_BLOCK, WORKER_IMAGE_LINE, 1)
 
@@ -96,8 +96,8 @@ def generate(dev_text: str, otel_text: str, version: str) -> str:
         )
     text = text.replace(OTEL_VOLUME_BLOCK, OTEL_CONFIGS_REF, 1)
 
-    # T3: pin every agentos-* image tag to the release version (worker-local too).
-    text = AGENTOS_LATEST_RE.sub(rf"\1:{version}", text)
+    # T3: pin every curie-* image tag to the release version (worker-local too).
+    text = CURIE_LATEST_RE.sub(rf"\1:{version}", text)
 
     return text
 

@@ -21,7 +21,7 @@ produced by a hand-rolled emitter, `aci_protocol.rust_export`, which introspects
 the same Pydantic models the JSON Schema is built from and writes idiomatic serde
 structs and internally-tagged enums. The TypeScript lane, by contrast, is
 generated from the committed JSON Schema by `json-schema-to-typescript`.
-[#81](https://github.com/curie-eng/agentos/issues/81) asks whether the Rust lane
+[#81](https://github.com/curie-eng/curie/issues/81) asks whether the Rust lane
 should switch to the same posture: generate from the JSON Schema with
 [`typify`](https://github.com/oxidecomputer/typify), the Rust crate that emits
 types from JSON Schema, and retire the bespoke emitter.

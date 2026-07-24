@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from agentos_worker.eval.models import EvalCaseResult, EvalOutcome
-from agentos_worker.eval.sampling import AggregationPolicy, SampleConfig, aggregate
+from curie_worker.eval.models import EvalCaseResult, EvalOutcome
+from curie_worker.eval.sampling import AggregationPolicy, SampleConfig, aggregate
 
 
 def _result(outcome: EvalOutcome, *, output: str = "", latency: float = 1.0,

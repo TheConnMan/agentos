@@ -8,9 +8,9 @@ that already exist in ``side_effects.py``, ``sdk_auth.py``, and ``plugin.py``.
 from pathlib import Path
 
 import pytest
-from agentos_runner import CLAUDE_READONLY_TOOLS, load_bundle_system_prompt, load_plugins
-from agentos_runner.harness import get_contribution
-from agentos_runner.sdk_auth import (
+from curie_runner import CLAUDE_READONLY_TOOLS, load_bundle_system_prompt, load_plugins
+from curie_runner.harness import get_contribution
+from curie_runner.sdk_auth import (
     API_BACKEND_ENV,
     CREDENTIALS_ENV,
     MODEL_BASE_URL_ENV,
@@ -27,7 +27,7 @@ def test_claude_contribution_wraps_readonly_tools() -> None:
 
 
 def test_claude_contribution_image_identity() -> None:
-    assert get_contribution().image == "agentos-runner"
+    assert get_contribution().image == "curie-runner"
 
 
 def test_claude_contribution_model_override_env_keys() -> None:

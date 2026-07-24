@@ -1,4 +1,4 @@
-# AgentOS Slack app manifest.
+# Curie Slack app manifest.
 #
 # Paste this at https://api.slack.com/apps -> Create New App -> From a manifest,
 # to create the app the dispatcher connects to. It encodes exactly what the
@@ -9,11 +9,11 @@
 # connections:write -> SLACK_APP_TOKEN; install to the workspace and copy the
 # Bot User OAuth Token -> SLACK_BOT_TOKEN.
 display_information:
-  name: AgentOS
-  description: Slack-based agents deployed by AgentOS.
+  name: Curie
+  description: Slack-based agents deployed by Curie.
 features:
   bot_user:
-    display_name: agentos
+    display_name: curie
     always_online: true
 oauth_config:
   scopes:
@@ -24,7 +24,7 @@ oauth_config:
       - groups:history
       - im:history
       - im:read
-      # Required only if you enable the shimmer status (AGENTOS_SHIMMER): lets the
+      # Required only if you enable the shimmer status (CURIE_SHIMMER): lets the
       # dispatcher/worker call assistant.threads.setStatus. You must ALSO turn on
       # the "Agents & AI Apps" feature in the app config (api.slack.com/apps ->
       # your app -> Agents & AI Apps) for setStatus to be accepted -- that toggle

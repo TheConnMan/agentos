@@ -1,6 +1,6 @@
 # CLAUDE.md - apps/ui
 
-The AgentOS console: Vite + React + TypeScript, no meta-framework. Full
+The Curie console: Vite + React + TypeScript, no meta-framework. Full
 structure and wiring detail in `apps/ui/README.md`.
 
 ## Load-bearing invariants
@@ -23,7 +23,7 @@ structure and wiring detail in `apps/ui/README.md`.
   data.
 - **All API calls are same-origin `/api`, proxied by Vite.** `apps/api` has
   no CORS middleware on purpose -- the browser must reach it same-origin.
-  `vite.config.ts` proxies `/api` to `AGENTOS_API_TARGET` and strips the
+  `vite.config.ts` proxies `/api` to `CURIE_API_TARGET` and strips the
   prefix. Do not add a cross-origin fetch to `apps/api`; if a new surface
   genuinely needs CORS, that is an `apps/api` change to raise with its
   owner, not a workaround in the UI.
@@ -40,7 +40,7 @@ structure and wiring detail in `apps/ui/README.md`.
   (epic #145). CLI hints on wired surfaces call `cliCommand()` directly
   (`src/primitives/cliCommand.ts`), which is typed against the committed
   command manifest (`src/generated/commandManifest.ts`). Never hand write an
-  `agentos` command string in a component. `CliHint.parity.test.tsx` inventories
+  `curie` command string in a component. `CliHint.parity.test.tsx` inventories
   these direct calls recursively across the complete production `src` tree,
   excluding tests, and requires every literal command to have a parity registry
   mapping (`src/primitives/parity.ts`). It also verifies that each
@@ -78,6 +78,6 @@ Integration E2E (needs the compose stack + a running `apps/api` with the
 schema applied):
 ```bash
 (cd ../api && uv run alembic upgrade head)
-(cd ../api && uv run uvicorn agentos_api.main:app --port 8000) &
-PW_INTEGRATION=1 AGENTOS_API_TARGET=http://localhost:8000 pnpm exec playwright test --project=integration
+(cd ../api && uv run uvicorn curie_api.main:app --port 8000) &
+PW_INTEGRATION=1 CURIE_API_TARGET=http://localhost:8000 pnpm exec playwright test --project=integration
 ```

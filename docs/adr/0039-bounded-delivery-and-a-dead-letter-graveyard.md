@@ -4,7 +4,7 @@ Date: 2026-07-16
 
 Status: Accepted
 
-Implements [#505](https://github.com/curie-eng/agentos/issues/505).
+Implements [#505](https://github.com/curie-eng/curie/issues/505).
 
 **Amends ADR-0013** ("Concurrency and delivery: at-least-once streams with an
 idempotent, side-effect-aware kernel"). ADRs are immutable once Accepted, so this
@@ -25,7 +25,7 @@ but never acked is reclaimed after an idle timeout and reprocessed. That loop wa
 **unbounded** by design. Nothing in the model gave a permanently-failing entry a
 terminal state.
 
-Issue #505 is what that costs. `agentos local message` starts an ephemeral reply
+Issue #505 is what that costs. `curie local message` starts an ephemeral reply
 stub on `localhost:8155` and hands its URL to the turn. When the turn hits an
 approval gate, that URL is persisted into a durable `Approval` record and outlives
 the CLI process that served it. On resume the worker POSTs the reply to a port
@@ -33,7 +33,7 @@ that no longer has a listener, the reply raises a connection error, the error
 propagates out of the escalation path, the entry stays pending, and every reclaim
 tick re-dispatches it into the same guaranteed failure. The entry never leaves the
 pending list. It consumes reclaim budget on every pass forever, and the shared
-`agentos-workers` consumer group stops making progress on later turns. The failure
+`curie-workers` consumer group stops making progress on later turns. The failure
 is silent: no crash, no alert, just a worker that has quietly stopped working.
 
 The dead CLI stub is only the cause that surfaced first. Any permanently-failing
@@ -55,7 +55,7 @@ right instinct with the wrong terminal state, and it deleted the evidence.
 times and still failed is moved to a dead-letter stream and acked off the main
 group, rather than reclaimed and re-dispatched again.
 
-- **The cap.** `WorkerConfig.max_delivery` (env `AGENTOS_MAX_DELIVERY`, default
+- **The cap.** `WorkerConfig.max_delivery` (env `CURIE_MAX_DELIVERY`, default
   `5`, floor `ge=2`). The floor is a hard constraint, not a suggestion:
   `max_delivery=1` would dead-letter every ordinary worker crash on its first
   reclaim, which is precisely the crash recovery ADR-0013 exists to provide.
@@ -64,7 +64,7 @@ group, rather than reclaimed and re-dispatched again.
   governs the kernel's flag-clean per-turn retry *classification* inside a single
   delivery. Conflating the two would silently change kernel retry behavior.
 - **The graveyard.** `WorkerConfig.dead_letter_stream` (env
-  `AGENTOS_DEAD_LETTER_STREAM`), empty by default, which derives `<stream>:dead`
+  `CURIE_DEAD_LETTER_STREAM`), empty by default, which derives `<stream>:dead`
   at the use site. A static field default cannot reference `self.stream`, so the
   derivation lives in the consumer's `_dead_letter_stream` property. The first
   `XADD` creates the stream; nothing pre-creates it.
@@ -104,7 +104,7 @@ group, rather than reclaimed and re-dispatched again.
 - **The graveyard has no consumer group, but it IS bounded.** It is a sink, not a
   second processing lane. Replay, if an operator ever needs it, is `XRANGE` plus a
   re-`XADD` onto the main stream. Every `XADD` passes an approximate `MAXLEN` of
-  `WorkerConfig.dead_letter_maxlen` (env `AGENTOS_DEAD_LETTER_MAXLEN`, default
+  `WorkerConfig.dead_letter_maxlen` (env `CURIE_DEAD_LETTER_MAXLEN`, default
   `10000`, floor `ge=1`). The bound is not optional polish: the unparseable path
   dead-letters **per inbound entry**, so a wire-DTO drift that made entries
   unparseable en masse would grow the graveyard at full ingest rate, on the same
@@ -148,13 +148,13 @@ failure the port exists to prevent.
   approval-gated case and warn that its reply stub is ephemeral. Rejected as the
   fix: it reduces how often *this one cause* fires and does nothing for any other
   permanently-failing entry. The group can still stall. Deferred as
-  [#529](https://github.com/curie-eng/agentos/issues/529), a needed follow-up and
+  [#529](https://github.com/curie-eng/curie/issues/529), a needed follow-up and
   not a substitute.
 - **Fix only the resume transport fallback (Option 2).** Fall back to the worker's
   configured default transport when a per-turn reply endpoint is unreachable.
   Rejected as the fix for the same reason, plus it risks mis-delivering a reply to
   the wrong workspace and needs its own design. Deferred as
-  [#530](https://github.com/curie-eng/agentos/issues/530), a needed follow-up and
+  [#530](https://github.com/curie-eng/curie/issues/530), a needed follow-up and
   not a substitute. Neither #529 nor #530 replaces the cap: they reduce how often
   the CLI-stub case fires and do nothing for the general poison case.
 - **Track the delivery count in the worker process.** Rejected: a process-local
@@ -197,19 +197,19 @@ failure the port exists to prevent.
   looking. The severity trade above is therefore "silent total stall" against
   "logged single loss," which is a real improvement and still short of observable
   in the operational sense. Closing that gap is
-  [#531](https://github.com/curie-eng/agentos/issues/531).
+  [#531](https://github.com/curie-eng/curie/issues/531).
 - **A dead-lettered RESUME turn strands its approval.** `ResumeQueue.enqueue`
-  (`apps/api/src/agentos_api/resumequeue.py`) sets `resumed_at` once the XADD
+  (`apps/api/src/curie_api/resumequeue.py`) sets `resumed_at` once the XADD
   succeeds, and the resume reconciler
-  (`apps/api/src/agentos_api/resumereconciler.py`, over `list_resolved_unresumed`
-  in `apps/api/src/agentos_api/crud.py`) is gated on `resumed_at IS NULL`. A turn
+  (`apps/api/src/curie_api/resumereconciler.py`, over `list_resolved_unresumed`
+  in `apps/api/src/curie_api/crud.py`) is gated on `resumed_at IS NULL`. A turn
   that reached the stream and then died is therefore marked resumed and has no
   backstop: approved in Postgres, sandbox never wakes, nothing retries it. This is
   **not a regression**. Before this change the same turn was reclaimed forever
   against a dead endpoint, never resumed either, and stalled the whole group while
   failing. Bounding delivery does not create the stranding; it makes a
   pre-existing gap visible and localizes it to one turn. Closing it is
-  [#532](https://github.com/curie-eng/agentos/issues/532).
+  [#532](https://github.com/curie-eng/curie/issues/532).
 - **A cap is now a load-bearing invariant, and removing it is a regression, not a
   simplification.** This inherits ADR-0013's warning about the retry loop: a
   future change that drops the cap, raises it to infinity, or moves the count into

@@ -11,7 +11,7 @@ Install the local path tools:
 - `uv`, the Python workspace manager, and Python `3.13`. The workspace requires
   `>=3.13`.
 - Docker with Compose v2, for the dev stack and the local runner container.
-- An `agentos` CLI binary. Download, verify, and install the prebuilt binary for
+- A `curie` CLI binary. Download, verify, and install the prebuilt binary for
   your platform by following
   [docs/release-verification.md](release-verification.md#verify-the-cli-before-installing-it).
 
@@ -22,17 +22,17 @@ stable toolchain (edition `2021`):
 cd cli && cargo build --release
 ```
 
-The source build writes the binary to `cli/target/release/agentos`. Put the
-binary on `PATH`; the commands below assume `agentos` resolves.
+The source build writes the binary to `cli/target/release/curie`. Put the
+binary on `PATH`; the commands below assume `curie` resolves.
 
 `kubectl` and `helm` are not needed for local dev. They are only for the
 `cluster` target.
 
 If you build the CLI from source, build the runner image once from the repo
-root with `agentos build` (the single build entry point):
+root with `curie build` (the single build entry point):
 
 ```bash
-agentos build
+curie build
 ```
 
 A released binary instead pulls the pinned runner image from `GHCR` on first
@@ -44,19 +44,19 @@ The three targets (`skill`, `local`, `cluster`) and when to reach for each are
 described in the [README target guide](../README.md#which-target-do-i-want). For
 onboarding, start with `skill` for the fastest proof a bundle answers, then move
 to `local` for ticket verification — it puts the full platform in front of the
-runner with no Slack or Kubernetes. `agentos init` scaffolds a bundle and
+runner with no Slack or Kubernetes. `curie init` scaffolds a bundle and
 targets no environment.
 
 ## Fastest First Reply With `skill`
 
-The fastest first reply — `agentos init` then `skill up`/`message`/`down` — is
+The fastest first reply — `curie init` then `skill up`/`message`/`down` — is
 the [QUICKSTART](../QUICKSTART.md) flow.
 
 If `skill up` reports that the container name is already taken, a previous
 runner is still around: re-run with `--replace` to remove it and boot fresh. To
 clear a leftover runner from a directory that has no recorded state (a bundle
 you never ran `skill up` from, or one whose state file is gone), name it
-directly with `agentos skill down --name <container>`.
+directly with `curie skill down --name <container>`.
 
 ## The Real Product Loop With `local`
 
@@ -64,14 +64,14 @@ Bringing up the full compose platform and driving a turn through it —
 `local up` / `local deploy` / `local message`, plus `--minimal` for low-RAM
 machines — is covered in the
 [README](../README.md#how-do-i-test-an-agent-the-same-way-locally-and-on-kubernetes).
-`agentos local up` flips to live automatically when a credential
+`curie local up` flips to live automatically when a credential
 (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`) is present, so there is no
-manual `AGENTOS_FAKE_MODEL=0` step.
+manual `CURIE_FAKE_MODEL=0` step.
 
 For multi turn work, `local message` prints a `continue this conversation:`
-line. Use `agentos local message --continue "follow up"` to reuse the last
-turn's channel and thread from `.agentos/last-turn.json`. Send only the new <!-- doclint:ignore-line -->
-text. `--continue` reads the API key again from `$AGENTOS_API_KEY` and does not
+line. Use `curie local message --continue "follow up"` to reuse the last
+turn's channel and thread from `.curie/last-turn.json`. Send only the new <!-- doclint:ignore-line -->
+text. `--continue` reads the API key again from `$CURIE_API_KEY` and does not
 replay transport flags like `--listen-port`, so pass those again if you used
 custom values.
 
@@ -80,24 +80,24 @@ custom values.
 Use this as the verification loop for a code change:
 
 1. Rebuild what changed. Rebuild the runner image with
-   `agentos build` if you touched runner
+   `curie build` if you touched runner
    code. Run
-   `agentos local deploy --plugin-dir . --slack-channel C0123ABCD --api-url http://localhost:28000`
+   `curie local deploy --plugin-dir . --slack-channel C0123ABCD --api-url http://localhost:28000`
    again to push a changed bundle.
-2. Drive a real turn with `agentos local message "..."`. It walks the full
+2. Drive a real turn with `curie local message "..."`. It walks the full
    queue, worker, sandboxed runner, and reply path, the same path a Slack mention
    takes.
 3. Observe the result three ways:
    - The reply prints to **`stdout`**. Redirect it with
-     `agentos local message "..." > reply.txt`; progress goes to `stderr`, so it
+     `curie local message "..." > reply.txt`; progress goes to `stderr`, so it
      pipes cleanly.
    - The `worker` and `runner` log to `stdout`, so
-     `docker compose -f compose.dev.yaml logs -f agentos-worker`, or the runner
+     `docker compose -f compose.dev.yaml logs -f curie-worker`, or the runner
      container, makes the turn observable.
    - On the `full` profile, the turn is traced in `Langfuse`. This is skipped on
      `--minimal`.
-4. `agentos local status` confirms the compose services are healthy, with
-   `docker compose ps` under the hood. `agentos local down` stops the stack and
+4. `curie local status` confirms the compose services are healthy, with
+   `docker compose ps` under the hood. `curie local down` stops the stack and
    keeps volumes.
 
 This is a complete end to end verification with no Slack and no cluster, which
@@ -112,4 +112,4 @@ is the point of the `local` target.
   full tier table.
 - [`AGENTS.md`](../AGENTS.md): repo rules, verify commands, and dev stack
   gotchas.
-- [`docs/vision.md`](vision.md): what AgentOS is and why.
+- [`docs/vision.md`](vision.md): what Curie is and why.

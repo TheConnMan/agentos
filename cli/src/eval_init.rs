@@ -1,15 +1,15 @@
-//! `agentos skill eval-init`: a guided interview that writes `evals/cases.json`.
+//! `curie skill eval-init`: a guided interview that writes `evals/cases.json`.
 //!
 //! Issue #260 (eval-experience epic #26): turn an author's intent into a runnable
 //! starter suite by *interviewing* them -- one case at a time, ask for the prompt,
 //! the grader kind, and the expected answer -- then emit a
 //! [`crate::evals::EvalSuite`] in the frozen canonical eval-case shape. Because it
-//! serializes the same `EvalSuite`/`EvalCase`/`Grader` types `agentos skill eval`
+//! serializes the same `EvalSuite`/`EvalCase`/`Grader` types `curie skill eval`
 //! loads (not a hand-mirrored JSON writer), the generated file is byte-compatible
 //! with the frozen schema and re-loadable without a shape change -- and any drift
 //! in that schema breaks this command at compile time, not at author time.
 //!
-//! This is the *interactive* sibling of `agentos init --from-spec` (ADR-0021
+//! This is the *interactive* sibling of `curie init --from-spec` (ADR-0021
 //! decision 5), which is deliberately zero-prompt because a coding agent does the
 //! interviewing there. Here a human is at the keyboard, so the interview refuses
 //! to run without a TTY rather than block forever on a read a piped/agent stdin
@@ -42,9 +42,9 @@ pub fn run(opts: EvalInitOpts) -> Result<()> {
         return Err(crate::exit::CliError::usage(
             "eval-init is an interactive interview and needs a terminal; \
              a non-interactive author should assemble the spec's `evals` array \
-             and run `agentos init --from-spec` instead",
+             and run `curie init --from-spec` instead",
         )
-        .with_fix("run it in an interactive shell, or use `agentos init --from-spec`")
+        .with_fix("run it in an interactive shell, or use `curie init --from-spec`")
         .into());
     }
 
@@ -70,7 +70,7 @@ pub fn run(opts: EvalInitOpts) -> Result<()> {
         suite.cases.len(),
         opts.out.display()
     ));
-    ui.note("run `agentos skill eval` to execute the suite against a local runner");
+    ui.note("run `curie skill eval` to execute the suite against a local runner");
     Ok(())
 }
 
@@ -134,7 +134,7 @@ pub fn interview<R: BufRead, W: Write>(
         }
     }
 
-    // Hold the interview's output to the exact contract `agentos skill eval`
+    // Hold the interview's output to the exact contract `curie skill eval`
     // enforces (non-empty, every regex grader compiles) before we claim success.
     validate_suite(&name, &cases)?;
     Ok(EvalSuite { name, cases })

@@ -88,7 +88,7 @@ export function DevBanner() {
         fontFamily: C.mono,
       }}
     >
-      Viewing dev environment — @agentos-dev · branch dev
+      Viewing dev environment — @curie-dev · branch dev
     </div>
   );
 }

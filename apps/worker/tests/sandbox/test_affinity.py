@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import redis
-from agentos_worker.sandbox import AffinityStore, RouteRecord, RouteState, SandboxHandle
+from curie_worker.sandbox import AffinityStore, RouteRecord, RouteState, SandboxHandle
 
 
 def _handle(thread: str = "T1", claim: str = "claim-a") -> SandboxHandle:

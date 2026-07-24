@@ -1,6 +1,6 @@
 //! Local runner orchestration via the Docker CLI.
 //!
-//! `agentos skill up` boots the D1 runner image with the ACI-frozen boot env
+//! `curie skill up` boots the D1 runner image with the ACI-frozen boot env
 //! (runner/README.md documents the recipe); `stop` tears it down. Shelling out
 //! to `docker` keeps the CLI dependency-light: the target machine is a dev
 //! laptop that already has Docker if it can run the runner at all.
@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use agentos_aci_protocol::env_keys;
 use anyhow::{bail, Context, Result};
+use curie_aci_protocol::env_keys;
 use tokio::process::Command;
 
 /// Everything `docker run` needs to boot a local runner container.
@@ -26,15 +26,15 @@ pub struct StartSpec {
     pub network: Option<String>,
     pub otel_endpoint: Option<String>,
     pub model_base_url: Option<String>,
-    /// Model id forwarded as `AGENTOS_MODEL`; `None` leaves the runner on its
+    /// Model id forwarded as `CURIE_MODEL`; `None` leaves the runner on its
     /// SDK default.
     pub model: Option<String>,
     /// Env vars forwarded from the caller's environment when set (model
     /// credentials for real-model runs; never baked into the args as values).
     pub passthrough_env: Vec<String>,
     /// Env values supplied only to the Docker CLI process. Used for secrets
-    /// loaded from AgentOS private storage so they can be forwarded by `-e NAME`
-    /// without mutating the AgentOS process env or appearing in argv.
+    /// loaded from Curie private storage so they can be forwarded by `-e NAME`
+    /// without mutating the Curie process env or appearing in argv.
     pub docker_env: Vec<(String, String)>,
 }
 
@@ -51,7 +51,7 @@ pub struct CheckSpec {
 /// HOME so it can still write), all Linux capabilities dropped, and
 /// no-new-privileges. Mirrors the K8s runner `securityContext` and the worker
 /// Docker substrate's `RunnerHardening`
-/// (`apps/worker/src/agentos_worker/sandbox/docker.py`). Local mode accepts
+/// (`apps/worker/src/curie_worker/sandbox/docker.py`). Local mode accepts
 /// TRUSTED bundles only and is not the Kubernetes security boundary; these are
 /// practical defense-in-depth so a trusted-but-buggy bundle cannot escalate on
 /// the host. Docker's default seccomp profile stays active (never unconfined).
@@ -93,13 +93,13 @@ impl CheckSpec {
             "-v".into(),
             format!("{}:/plugin:ro", self.plugin_dir),
             "-e".into(),
-            format!("{}=/plugin", env_keys::AGENTOS_PLUGIN_DIR),
+            format!("{}=/plugin", env_keys::CURIE_PLUGIN_DIR),
             "-e".into(),
-            format!("AGENTOS_CHECK_TIMEOUT_S={}", self.timeout_s),
+            format!("CURIE_CHECK_TIMEOUT_S={}", self.timeout_s),
             self.image.clone(),
             "python".into(),
             "-m".into(),
-            "agentos_runner.check".into(),
+            "curie_runner.check".into(),
         ]);
         args
     }
@@ -118,13 +118,13 @@ impl StartSpec {
             "-v".into(),
             format!("{}:/plugin:ro", self.plugin_dir.display()),
             "-e".into(),
-            format!("{}=/plugin", env_keys::AGENTOS_PLUGIN_DIR),
+            format!("{}=/plugin", env_keys::CURIE_PLUGIN_DIR),
             "-e".into(),
-            format!("{}={}", env_keys::AGENTOS_SESSION_ID, self.session_id),
+            format!("{}={}", env_keys::CURIE_SESSION_ID, self.session_id),
             "-e".into(),
-            format!("{}={}", env_keys::AGENTOS_SANDBOX_ID, self.sandbox_id),
+            format!("{}={}", env_keys::CURIE_SANDBOX_ID, self.sandbox_id),
             "-e".into(),
-            format!("{}={}", env_keys::AGENTOS_BUDGET, self.budget_json),
+            format!("{}={}", env_keys::CURIE_BUDGET, self.budget_json),
         ];
         // Container isolation (#631): read-only rootfs + tmpfs, cap-drop ALL,
         // no-new-privileges. Mirrors the worker Docker substrate + K8s runner.
@@ -137,11 +137,11 @@ impl StartSpec {
         args.push(RUNNER_COMPONENT_LABEL.into());
         if self.fake_model {
             args.push("-e".into());
-            args.push(format!("{}=1", env_keys::AGENTOS_FAKE_MODEL));
+            args.push(format!("{}=1", env_keys::CURIE_FAKE_MODEL));
         }
         if let Some(model) = &self.model {
             args.push("-e".into());
-            args.push(format!("{}={model}", env_keys::AGENTOS_MODEL));
+            args.push(format!("{}={model}", env_keys::CURIE_MODEL));
         }
         if let Some(url) = &self.model_base_url {
             args.push("-e".into());
@@ -458,25 +458,25 @@ fn count_removed(rm_stdout: &str) -> usize {
 }
 
 /// The label that worker-local stamps on every runner container it spawns.
-pub const SANDBOX_LABEL: &str = "agentos.dev/managed-by=agentos-sandbox-substrate";
+pub const SANDBOX_LABEL: &str = "curietech.ai/managed-by=curie-sandbox-substrate";
 
 /// The runner image's short name (the dev/local tag, and the base of the GHCR
 /// release ref). One definition (#497) instead of the literal scattered across
 /// the artifact resolver, the boot path, and the clap defaults.
-pub const RUNNER_IMAGE: &str = "agentos-runner";
+pub const RUNNER_IMAGE: &str = "curie-runner";
 
 /// The fixed container name for the single local/skill runner (`skill up` /
 /// `local` boot it, `skill down` reaps it). One definition (#497).
-pub const RUNNER_CONTAINER_LOCAL: &str = "agentos-runner-local";
+pub const RUNNER_CONTAINER_LOCAL: &str = "curie-runner-local";
 
 /// The label every CLI-booted container carries (#747), so a leftover runner is
 /// identifiable as ours. Distinct from [`SANDBOX_LABEL`] on purpose: that one is
 /// the worker substrate's and drives `local down`'s reap set, which this must
 /// not widen.
-pub const CLI_MANAGED_LABEL: &str = "agentos.dev/managed-by=agentos-cli";
+pub const CLI_MANAGED_LABEL: &str = "curietech.ai/managed-by=curie-cli";
 
 /// The component label on CLI-booted runner containers (#747).
-pub const RUNNER_COMPONENT_LABEL: &str = "agentos.dev/component=runner";
+pub const RUNNER_COMPONENT_LABEL: &str = "curietech.ai/component=runner";
 
 /// The key and value halves of [`CLI_MANAGED_LABEL`]. Split from the one
 /// declaration rather than restated, so the `--format` read below cannot drift
@@ -494,7 +494,7 @@ pub struct ContainerFacts {
     /// across boots: a name can be reused by an entirely different container
     /// (#747).
     pub id: String,
-    /// Whether it carries [`CLI_MANAGED_LABEL`], i.e. the AgentOS CLI booted it.
+    /// Whether it carries [`CLI_MANAGED_LABEL`], i.e. the Curie CLI booted it.
     pub cli_managed: bool,
 }
 
@@ -532,7 +532,7 @@ pub async fn container_exists(name: &str) -> Result<bool> {
     Ok(container_facts(name).await?.is_some())
 }
 
-/// Whether these facts describe a container the AgentOS CLI booted. A container
+/// Whether these facts describe a container the Curie CLI booted. A container
 /// left by a pre-label release reads as false, so this can inform a warning but
 /// must never gate a removal (#747).
 pub fn is_cli_managed(facts: Option<&ContainerFacts>) -> bool {
@@ -550,7 +550,7 @@ pub enum NamePlan {
 
 /// Which verb hit the conflict, and therefore which remedies are real.
 ///
-/// `skill eval`'s per-model sweep boots its own `agentos-eval-sweep-<i>`
+/// `skill eval`'s per-model sweep boots its own `curie-eval-sweep-<i>`
 /// containers and accepts none of `--replace`, `--name` or `--port`, so it must
 /// not be offered them (#747).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -581,7 +581,7 @@ pub fn plan_container_name(
             ConflictContext::SkillUp => format!(
                 "container name conflict: '{name}' already exists, likely a leftover runner from an earlier session; \
 re-run with --replace to remove it and boot fresh, \
-or remove it with 'agentos skill down --name {name}', \
+or remove it with 'curie skill down --name {name}', \
 or boot this bundle beside it with a different --name{}",
                 match port {
                     Some(port) => format!(" and --port (this run wanted port {port})"),
@@ -592,7 +592,7 @@ or boot this bundle beside it with a different --name{}",
             // not be force-removed out from under it.
             ConflictContext::EvalSweep => format!(
                 "container name conflict: '{name}' already exists, likely a leftover from an interrupted model sweep{}; \
-remove it with 'agentos skill down --name {name}' and re-run the sweep",
+remove it with 'curie skill down --name {name}' and re-run the sweep",
                 match port {
                     Some(port) => format!(" (it was to serve port {port})"),
                     None => String::new(),
@@ -752,31 +752,31 @@ mod tests {
 
     fn spec() -> StartSpec {
         StartSpec {
-            image: "agentos-runner".into(),
-            container_name: "agentos-runner-local".into(),
+            image: "curie-runner".into(),
+            container_name: "curie-runner-local".into(),
             host_port: 7245,
             plugin_dir: PathBuf::from("/tmp/deal-desk"),
             session_id: "local-1".into(),
             sandbox_id: "local".into(),
             budget_json: r#"{"max_output_tokens_per_run":100000,"max_usd_per_day":5.0}"#.into(),
             fake_model: true,
-            network: Some("agentos_default".into()),
+            network: Some("curie_default".into()),
             otel_endpoint: Some("http://otel-collector:4318".into()),
             model_base_url: None,
             model: None,
-            passthrough_env: vec!["AGENTOS_TEST_ENV_THAT_DOES_NOT_EXIST".into()],
+            passthrough_env: vec!["CURIE_TEST_ENV_THAT_DOES_NOT_EXIST".into()],
             docker_env: vec![],
         }
     }
 
     #[test]
     fn ollama_run_args_mount_the_model_cache_volume() {
-        let args = ollama_run_args("agentos-ollama", "agentos-net", "ollama/ollama:0.24.0");
+        let args = ollama_run_args("curie-ollama", "curie-net", "ollama/ollama:0.24.0");
         let joined = args.join(" ");
-        assert!(joined.starts_with("run -d --name agentos-ollama --network agentos-net"));
-        assert!(joined.contains("-v agentos-ollama-data:/root/.ollama"));
+        assert!(joined.starts_with("run -d --name curie-ollama --network curie-net"));
+        assert!(joined.contains("-v curie-ollama-data:/root/.ollama"));
         assert_eq!(args.last().unwrap(), "ollama/ollama:0.24.0");
-        assert_eq!(ollama_volume("agentos-ollama"), "agentos-ollama-data");
+        assert_eq!(ollama_volume("curie-ollama"), "curie-ollama-data");
     }
 
     #[test]
@@ -784,10 +784,9 @@ mod tests {
         // The sidecar is CLI-booted and removable by name, so it must be
         // identifiable as ours (#747) or `skill down --name <bundle>-ollama`
         // warns about a container this feature itself created.
-        let joined =
-            ollama_run_args("agentos-ollama", "agentos-net", "ollama/ollama:0.24.0").join(" ");
+        let joined = ollama_run_args("curie-ollama", "curie-net", "ollama/ollama:0.24.0").join(" ");
         assert!(
-            joined.contains("--label agentos.dev/managed-by=agentos-cli"),
+            joined.contains("--label curietech.ai/managed-by=curie-cli"),
             "{joined}"
         );
         // Still outside the worker substrate's reap set.
@@ -798,18 +797,18 @@ mod tests {
     fn run_args_carry_the_aci_boot_env() {
         let args = spec().run_args();
         let joined = args.join(" ");
-        assert!(joined.starts_with("run -d --name agentos-runner-local -p 7245:8080"));
+        assert!(joined.starts_with("run -d --name curie-runner-local -p 7245:8080"));
         assert!(joined.contains("-v /tmp/deal-desk:/plugin:ro"));
-        assert!(joined.contains("-e AGENTOS_PLUGIN_DIR=/plugin"));
-        assert!(joined.contains("-e AGENTOS_SESSION_ID=local-1"));
-        assert!(joined.contains("-e AGENTOS_SANDBOX_ID=local"));
+        assert!(joined.contains("-e CURIE_PLUGIN_DIR=/plugin"));
+        assert!(joined.contains("-e CURIE_SESSION_ID=local-1"));
+        assert!(joined.contains("-e CURIE_SANDBOX_ID=local"));
         assert!(joined.contains(
-            "-e AGENTOS_BUDGET={\"max_output_tokens_per_run\":100000,\"max_usd_per_day\":5.0}"
+            "-e CURIE_BUDGET={\"max_output_tokens_per_run\":100000,\"max_usd_per_day\":5.0}"
         ));
-        assert!(joined.contains("-e AGENTOS_FAKE_MODEL=1"));
-        assert!(joined.contains("--network agentos_default"));
+        assert!(joined.contains("-e CURIE_FAKE_MODEL=1"));
+        assert!(joined.contains("--network curie_default"));
         assert!(joined.contains("-e OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318"));
-        assert_eq!(args.last().unwrap(), "agentos-runner");
+        assert_eq!(args.last().unwrap(), "curie-runner");
     }
 
     #[test]
@@ -837,11 +836,11 @@ mod tests {
         // CLI-booted runners are identifiable as ours (#747)...
         let joined = spec().run_args().join(" ");
         assert!(
-            joined.contains("--label agentos.dev/managed-by=agentos-cli"),
+            joined.contains("--label curietech.ai/managed-by=curie-cli"),
             "{joined}"
         );
         assert!(
-            joined.contains("--label agentos.dev/component=runner"),
+            joined.contains("--label curietech.ai/component=runner"),
             "{joined}"
         );
         // ...without joining the worker substrate's reap set, which `local down`
@@ -853,7 +852,7 @@ mod tests {
     fn plan_container_name_proceeds_when_the_name_is_free() {
         assert_eq!(
             plan_container_name(
-                "agentos-runner-local",
+                "curie-runner-local",
                 Some(7245),
                 false,
                 false,
@@ -863,7 +862,7 @@ mod tests {
         );
         assert_eq!(
             plan_container_name(
-                "agentos-runner-local",
+                "curie-runner-local",
                 Some(7245),
                 false,
                 true,
@@ -877,7 +876,7 @@ mod tests {
     fn plan_container_name_replaces_only_when_asked() {
         assert_eq!(
             plan_container_name(
-                "agentos-runner-local",
+                "curie-runner-local",
                 Some(7245),
                 true,
                 true,
@@ -892,17 +891,17 @@ mod tests {
         // The operator must never meet docker's raw exit-125 conflict here
         // (#747): the error names the container and all three ways out.
         let err = plan_container_name(
-            "agentos-runner-local",
+            "curie-runner-local",
             Some(7245),
             true,
             false,
             ConflictContext::SkillUp,
         )
         .expect_err("an existing container without --replace must fail");
-        assert!(err.contains("agentos-runner-local"), "{err}");
+        assert!(err.contains("curie-runner-local"), "{err}");
         assert!(err.contains("--replace"), "{err}");
         assert!(
-            err.contains("agentos skill down --name agentos-runner-local"),
+            err.contains("curie skill down --name curie-runner-local"),
             "{err}"
         );
         assert!(err.contains("--name"), "{err}");
@@ -919,17 +918,17 @@ mod tests {
         // actually has: it accepts no --replace, no --name and no --port, so
         // offering them would send the operator down a dead end.
         let err = plan_container_name(
-            "agentos-eval-sweep-0",
+            "curie-eval-sweep-0",
             Some(7345),
             true,
             false,
             ConflictContext::EvalSweep,
         )
         .expect_err("an existing container without --replace must fail");
-        assert!(err.contains("agentos-eval-sweep-0"), "{err}");
+        assert!(err.contains("curie-eval-sweep-0"), "{err}");
         assert!(err.contains("7345"), "{err}");
         assert!(
-            err.contains("agentos skill down --name agentos-eval-sweep-0"),
+            err.contains("curie skill down --name curie-eval-sweep-0"),
             "{err}"
         );
         assert!(!err.contains("--replace"), "{err}");
@@ -942,17 +941,17 @@ mod tests {
         // The local-model sidecar publishes no host port, so `--port` is not the
         // knob that moves it out of the way; naming it would misdirect (#747).
         let err = plan_container_name(
-            "agentos-runner-local-ollama",
+            "curie-runner-local-ollama",
             None,
             true,
             false,
             ConflictContext::SkillUp,
         )
         .expect_err("an existing container without --replace must fail");
-        assert!(err.contains("agentos-runner-local-ollama"), "{err}");
+        assert!(err.contains("curie-runner-local-ollama"), "{err}");
         assert!(err.contains("--replace"), "{err}");
         assert!(
-            err.contains("agentos skill down --name agentos-runner-local-ollama"),
+            err.contains("curie skill down --name curie-runner-local-ollama"),
             "{err}"
         );
         // No port clause at all, not just no `--port` flag.
@@ -967,19 +966,19 @@ mod tests {
         // (#747).
         let raw = anyhow::anyhow!(
             "docker run failed (exit status: 125): docker: Error response from daemon: Conflict. \
-The container name \"/agentos-runner-local\" is already in use by container \"9f2c\"."
+The container name \"/curie-runner-local\" is already in use by container \"9f2c\"."
         );
         assert!(is_name_conflict_error(&raw.to_string()));
         let mapped = map_name_conflict(
             raw.context("starting runner container"),
-            "agentos-runner-local",
+            "curie-runner-local",
             Some(7245),
             ConflictContext::SkillUp,
         );
         let text = format!("{mapped:#}");
         assert!(text.contains("--replace"), "{text}");
         assert!(
-            text.contains("agentos skill down --name agentos-runner-local"),
+            text.contains("curie skill down --name curie-runner-local"),
             "{text}"
         );
         assert!(!text.contains("125"), "{text}");
@@ -997,7 +996,7 @@ driver failed programming external connectivity: port is already allocated."
         assert!(!is_name_conflict_error(&raw.to_string()));
         let mapped = map_name_conflict(
             raw,
-            "agentos-runner-local",
+            "curie-runner-local",
             Some(7245),
             ConflictContext::SkillUp,
         );
@@ -1011,7 +1010,7 @@ driver failed programming external connectivity: port is already allocated."
         // The offline MCP-load check runs untrusted bundle code, so it stays
         // network-isolated AND carries the same container hardening.
         let spec = CheckSpec {
-            image: "agentos-runner".into(),
+            image: "curie-runner".into(),
             plugin_dir: "/tmp/deal-desk".into(),
             timeout_s: 30,
         };
@@ -1024,7 +1023,7 @@ driver failed programming external connectivity: port is already allocated."
             "{joined}"
         );
         assert!(
-            joined.trim_end().ends_with("agentos_runner.check"),
+            joined.trim_end().ends_with("curie_runner.check"),
             "{joined}"
         );
     }
@@ -1034,8 +1033,8 @@ driver failed programming external connectivity: port is already allocated."
         let mut s = spec();
         s.fake_model = false;
         let joined = s.run_args().join(" ");
-        assert!(!joined.contains("AGENTOS_FAKE_MODEL"));
-        assert!(!joined.contains("AGENTOS_TEST_ENV_THAT_DOES_NOT_EXIST"));
+        assert!(!joined.contains("CURIE_FAKE_MODEL"));
+        assert!(!joined.contains("CURIE_TEST_ENV_THAT_DOES_NOT_EXIST"));
     }
 
     #[test]
@@ -1052,13 +1051,13 @@ driver failed programming external connectivity: port is already allocated."
     fn model_is_forwarded_only_when_set() {
         let mut s = spec();
         s.model = None;
-        assert!(!s.run_args().join(" ").contains("AGENTOS_MODEL"));
+        assert!(!s.run_args().join(" ").contains("CURIE_MODEL"));
 
         s.model = Some("claude-opus-4-8".into());
         assert!(s
             .run_args()
             .join(" ")
-            .contains("-e AGENTOS_MODEL=claude-opus-4-8"));
+            .contains("-e CURIE_MODEL=claude-opus-4-8"));
     }
 
     #[test]
@@ -1085,6 +1084,6 @@ driver failed programming external connectivity: port is already allocated."
         s.model_base_url = Some("http://x-ollama:11434".into());
         let joined = s.run_args().join(" ");
         assert!(joined.contains("-e ANTHROPIC_BASE_URL=http://x-ollama:11434"));
-        assert!(!joined.contains("AGENTOS_FAKE_MODEL"));
+        assert!(!joined.contains("CURIE_FAKE_MODEL"));
     }
 }

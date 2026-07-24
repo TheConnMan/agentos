@@ -44,7 +44,7 @@ Pydantic models mirroring the Claude Code shapes:
   matching tool call — exit 0 allows, exit 2 denies (stderr = reason), any other
   non-zero is a non-blocking hook error. Only `PreToolUse` is consumed today;
   other events validate but are not yet wired.
-- `TriggerDeclaration` (the manifest `triggers` field, an AgentOS extension for
+- `TriggerDeclaration` (the manifest `triggers` field, a Curie extension for
   triggers beyond chat, #273/#270): a list of `{type, ...}`. `type` is `cron`
   (requires a non-empty `schedule` cron expression) or `webhook` (requires a
   non-empty `path`). Declaring triggers in the bundle keeps an agent's full
@@ -64,7 +64,7 @@ Pydantic models mirroring the Claude Code shapes:
   previously validated green but silently never armed (#453). Built-in gates
   (no `mcp__` prefix, e.g. `Bash`) are unaffected. The error message names the
   expected form; to arm a live tool name the bundle does not declare, use the
-  per-agent `AGENTOS_APPROVAL_REQUIRED_TOOLS` env knob instead. Runtime approval
+  per-agent `CURIE_APPROVAL_REQUIRED_TOOLS` env knob instead. Runtime approval
   routing is a separate not-yet-built seam, so this is validation only today.
 - `scripts/` is a directory convention (no manifest schema of its own).
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/kill/v1.json",
-  "title": "agentos <tier> kill --json",
-  "description": "The agent-facing payload of `agentos <tier> kill <agent>`: the dry-run plan, or the resulting kill state.",
+  "$id": "https://schemas.curietech.ai/cli/kill/v1.json",
+  "title": "curie <tier> kill --json",
+  "description": "The agent-facing payload of `curie <tier> kill <agent>`: the dry-run plan, or the resulting kill state.",
   "$defs": {
     "dryRun": {
       "type": "object",

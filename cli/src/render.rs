@@ -4,7 +4,7 @@
 //! Supabase-style rounded box listing the local bot URL, the emulator and eval
 //! commands, and the version line.
 
-use agentos_aci_protocol::{OutboundEvent, SessionStatus};
+use curie_aci_protocol::{OutboundEvent, SessionStatus};
 
 /// Human-readable session status, matching the wire vocabulary.
 pub fn status_str(status: &SessionStatus) -> &'static str {
@@ -89,7 +89,7 @@ impl TurnPrinter {
     }
 }
 
-/// Render the boxed environment summary the design specifies for `agentos skill up`.
+/// Render the boxed environment summary the design specifies for `curie skill up`.
 pub fn boxed_summary(title: &str, rows: &[(&str, String)]) -> String {
     let label_width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
     let body: Vec<String> = rows
@@ -128,7 +128,7 @@ pub fn boxed_summary(title: &str, rows: &[(&str, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentos_aci_protocol::PROTOCOL_VERSION;
+    use curie_aci_protocol::PROTOCOL_VERSION;
 
     fn v() -> String {
         PROTOCOL_VERSION.to_string()
@@ -247,19 +247,19 @@ mod tests {
             ("Local bot", "http://localhost:7245".to_string()),
             (
                 "Slack emulator",
-                "agentos skill message \"<message>\"".to_string(),
+                "curie skill message \"<message>\"".to_string(),
             ),
-            ("Eval runner", "agentos skill eval".to_string()),
+            ("Eval runner", "curie skill eval".to_string()),
             ("Version", "dev @ 4f2c91a".to_string()),
         ];
-        let boxed = boxed_summary("agentos dev environment", &rows);
+        let boxed = boxed_summary("curie dev environment", &rows);
         let lines: Vec<&str> = boxed.lines().collect();
         assert_eq!(lines.len(), rows.len() + 2);
         let width = lines[0].chars().count();
         for line in &lines {
             assert_eq!(line.chars().count(), width, "misaligned line: {line}");
         }
-        assert!(lines[0].contains("agentos dev environment"));
+        assert!(lines[0].contains("curie dev environment"));
         assert!(lines[1].contains("Local bot"));
         assert!(lines[1].contains("http://localhost:7245"));
     }

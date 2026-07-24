@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from agentos_worker.eval import (
+from curie_worker.eval import (
     EvalCase,
     EvalRunner,
     EvalSuite,

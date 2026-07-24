@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 import pytest
-from agentos_api.github_checks import (
+from curie_api.github_checks import (
     GitHubReportError,
     GitHubStatusReporter,
     eval_state,
@@ -33,7 +33,7 @@ def _run_report(passed: int, total: int) -> tuple[httpx.Request, str]:
                 client,
                 api_url="https://api.github.com",
                 token="tok-123",
-                context="agentos/evals",
+                context="curie/evals",
             )
             state = await reporter.report_eval(
                 "octo/demo", "abc123def", passed, total, target_url="https://x/run"
@@ -53,7 +53,7 @@ def test_report_eval_posts_the_exact_commit_status() -> None:
     body: dict[str, Any] = json.loads(request.content)
     assert body == {
         "state": "failure",
-        "context": "agentos/evals",
+        "context": "curie/evals",
         "description": "34/36 passed",
         "target_url": "https://x/run",
     }
@@ -100,7 +100,7 @@ def test_report_eval_raises_typed_error_on_github_rejection() -> None:
                 client,
                 api_url="https://api.github.com",
                 token="tok-123",
-                context="agentos/evals",
+                context="curie/evals",
             )
             with pytest.raises(GitHubReportError) as excinfo:
                 await reporter.report_eval("octo/ghost", "nope", 1, 1)

@@ -1,0 +1,227 @@
+{{- if and .Values.agentSandbox.controller.deploy .Values.preflights.controllerReady.enabled }}
+{{/*
+Preflight (c): controller-ready install-time gate (issue #350, ADR-0023).
+
+The vendored agent-sandbox controller runs a CLUSTER-scope NetworkPolicy
+informer; if its RBAC cannot satisfy that cluster LIST, the manager crash-loops
+and no SandboxClaim ever binds. The vendored Deployment has NO readiness probe,
+so `rollout status` passes while the manager still blocks on cache sync -- the
+load-bearing signal is the "Starting workers" log line, emitted only after all
+informer caches sync. This post-install/post-upgrade hook Job fails the Helm
+operation unless the controller reaches that state, so an RBAC regression fails
+at install, not at first turn.
+
+The gate is read-only: its Role can only get/list/watch deployments + pods and
+read pod logs in agent-sandbox-system. Gated on agentSandbox.controller.deploy
+so it never runs against a BYO controller this release does not own.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "curie.fullname" . }}-preflight-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade,test
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "curie.fullname" . }}-preflight-controller
+  namespace: agent-sandbox-system
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade,test
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "curie.fullname" . }}-preflight-controller
+  namespace: agent-sandbox-system
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade,test
+    "helm.sh/hook-weight": "-4"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "curie.fullname" . }}-preflight-controller
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "curie.fullname" . }}-preflight-controller
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "curie.fullname" . }}-preflight-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade,test
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "curie.labels" . | nindent 8 }}
+        {{- include "curie.selectorLabels" (dict "root" . "component" "preflight-controller") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "curie.fullname" . }}-preflight-controller
+      restartPolicy: Never
+      containers:
+        - name: controller-ready
+          image: {{ .Values.preflights.controllerReady.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: CONTROLLER_NS
+              value: "agent-sandbox-system"
+            - name: DEPLOY
+              value: "agent-sandbox-controller"
+            - name: TIMEOUT
+              value: {{ .Values.preflights.controllerReady.timeoutSeconds | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -u
+              # Short fixed budget for the preliminary rollout-status check,
+              # deliberately much smaller than ${TIMEOUT}. It caps the total
+              # wall-clock at ~ROLLOUT_TIMEOUT + TIMEOUT (~210s) so the Job stays
+              # safely under Helm's default 300s install/upgrade hook timeout and
+              # its FAIL diagnostic always prints -- even on Pending /
+              # ImagePullBackOff paths where the controller never becomes
+              # Available -- instead of Helm killing the Job generically first.
+              ROLLOUT_TIMEOUT=30
+              echo "== Curie controller-ready preflight =="
+              echo "controller: deployment/${DEPLOY}  namespace: ${CONTROLLER_NS}  timeout: ${TIMEOUT}s"
+
+              # Existence/schedule check only, bounded by the short
+              # ROLLOUT_TIMEOUT (not ${TIMEOUT}). The vendored Deployment has NO
+              # readiness probe (D2), so a passing rollout is NOT proof the
+              # informer caches synced -- this rc is informative only; the poll
+              # loop below (bounded by ${TIMEOUT}) is the real gate.
+              kubectl rollout status "deployment/${DEPLOY}" -n "${CONTROLLER_NS}" \
+                --timeout="${ROLLOUT_TIMEOUT}s" 2>/dev/null
+              rc=$?
+              echo "rollout status rc=${rc} (informative only)"
+
+              # The load-bearing assertion: poll the controller log for
+              # "Starting workers" (emitted only after all informer caches
+              # sync). Fail fast on a forbidden-networkpolicies log line or a
+              # restarting pod. A restart is NOT diagnostic on its own: the #350
+              # crash-loop (RBAC) and a leader-election lease timeout (#507) both
+              # restart the pod, so classify the CAUSE from the logs instead of
+              # blaming NetworkPolicy RBAC unconditionally.
+              cause=unknown
+              elapsed=0
+              while [ "${elapsed}" -lt "${TIMEOUT}" ]; do
+                logs=$(kubectl logs "deployment/${DEPLOY}" -n "${CONTROLLER_NS}" --tail=-1 2>/dev/null || true)
+
+                if echo "${logs}" | grep -q "Starting workers"; then
+                  echo "RESULT: PASS -- agent-sandbox-controller Available and informer caches synced ('Starting workers' observed)."
+                  exit 0
+                fi
+
+                restarts=$(kubectl get pods -n "${CONTROLLER_NS}" -l app=agent-sandbox-controller \
+                  -o jsonpath='{.items[*].status.containerStatuses[*].restartCount}' 2>/dev/null || true)
+                restarted=0
+                for r in ${restarts}; do
+                  if [ "${r}" -gt 0 ] 2>/dev/null; then
+                    restarted=1
+                  fi
+                done
+
+                # A previous container's logs only exist once the pod has
+                # restarted, so only fetch --previous then -- skips a wasted
+                # kubectl call every poll on the healthy path.
+                prev=""
+                if [ "${restarted}" -eq 1 ]; then
+                  prev=$(kubectl logs "deployment/${DEPLOY}" -n "${CONTROLLER_NS}" --tail=-1 --previous 2>/dev/null || true)
+                fi
+
+                # Classify by the actual log signal, most-specific first. The
+                # forbidden-networkpolicies line is the #350 RBAC signature; a
+                # leader-election lease loss is the #507 signature (the manager
+                # exits and the pod restarts, but RBAC is fine).
+                #
+                # Join the two logs with a NEWLINE: command substitution strips
+                # trailing newlines, so a bare "${logs}${prev}" glues the last
+                # line of one onto the first line of the other and can fabricate
+                # a signature that appears in NEITHER log (issue #611).
+                if printf '%s\n%s' "${logs}" "${prev}" | grep -Eq "networkpolicies.*[Ff]orbidden"; then
+                  cause=rbac
+                  echo "detected controller failure (forbidden networkpolicies log)."
+                  break
+                elif printf '%s\n%s' "${logs}" "${prev}" | grep -Eq "leader election lost|failed to renew lease|error retrieving resource lock|timed out waiting for the condition.*lease"; then
+                  cause=lease
+                  echo "detected controller failure (leader-election lease not renewed)."
+                  break
+                elif [ "${restarted}" -eq 1 ]; then
+                  cause=restart
+                  echo "detected controller restart (restartCount>0) with no recognized failure signature."
+                  break
+                fi
+
+                sleep 5
+                elapsed=$(( elapsed + 5 ))
+              done
+
+              echo "---"
+              echo "FAIL diagnostic: last controller log lines:"
+              kubectl logs "deployment/${DEPLOY}" -n "${CONTROLLER_NS}" --tail=40 2>/dev/null || true
+              echo "---"
+              echo "controller pod status:"
+              kubectl get pods -n "${CONTROLLER_NS}" -l app=agent-sandbox-controller 2>/dev/null || true
+              echo "---"
+              case "${cause}" in
+                rbac)
+                  echo "RESULT: FAIL -- controller did not reach 'Starting workers' -- its NetworkPolicy"
+                  echo "        informer cannot sync (forbidden-networkpolicies logged). Verify ClusterRole"
+                  echo "        agent-sandbox-controller-networkpolicies-read exists and grants"
+                  echo "        get/list/watch on networkpolicies cluster-wide (issue #350 / ADR-0023)."
+                  echo "        If this is an upgrade over a previously crash-looping controller, the"
+                  echo "        pod may still be in CrashLoopBackOff backoff -- delete the controller"
+                  echo "        pod and re-run 'helm test <release>'."
+                  ;;
+                lease)
+                  echo "RESULT: FAIL -- controller lost its leader-election lease before syncing (issue #507)."
+                  echo "        This is NOT an RBAC/NetworkPolicy problem -- the lease could not be renewed"
+                  echo "        in time, typically under API-server saturation or a too-tight lease deadline."
+                  echo "        Retry once the API server is healthy; if it recurs, loosen the controller's"
+                  echo "        leader-election lease/renew deadlines."
+                  ;;
+                *)
+                  echo "RESULT: FAIL -- controller did not reach 'Starting workers' within ${TIMEOUT}s and no"
+                  echo "        recognized failure signature (forbidden-networkpolicies or lease loss) was"
+                  echo "        logged. Inspect the controller log lines above for the cause."
+                  echo "        If this is an upgrade over a previously crash-looping controller, the"
+                  echo "        pod may still be in CrashLoopBackOff backoff -- delete the controller"
+                  echo "        pod and re-run 'helm test <release>'."
+                  ;;
+              esac
+              exit 1
+          resources:
+            {{- toYaml .Values.preflights.controllerReady.resources | nindent 12 }}
+{{- end }}

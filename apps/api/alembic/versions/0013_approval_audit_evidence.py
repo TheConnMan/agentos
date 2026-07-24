@@ -23,7 +23,7 @@ down_revision: str | None = "0012"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-SCHEMA = "agentos"
+SCHEMA = "curie"
 
 
 def upgrade() -> None:

@@ -1,19 +1,19 @@
-# 44. Workflow-controlled agents run on AgentOS as a callable substrate first, a unified plane only on demand
+# 44. Workflow-controlled agents run on Curie as a callable substrate first, a unified plane only on demand
 
 Date: 2026-07-16
 
 Status: Proposed
 
-This is a **decision, not code**: it settles whether, and how deeply, AgentOS
+This is a **decision, not code**: it settles whether, and how deeply, Curie
 supports *workflow-controlled* agents — developer-authored orchestration
 frameworks such as LangGraph and CrewAI — and what we would build to do it.
 
 ## Context
 
 There are two agent-architecture shapes. **Model-controlled**: the model drives
-an agentic loop and decides the next action each turn. This is AgentOS's default
+an agentic loop and decides the next action each turn. This is Curie's default
 and the thing the whole platform is built around — Claude Code (and the OpenCode
-spike) sit behind the turn-based `ModelSession` port, per ADR-0021 ("AgentOS is a
+spike) sit behind the turn-based `ModelSession` port, per ADR-0021 ("Curie is a
 harness for coding agents") and ADR-0011. **Workflow-controlled**: the developer
 explicitly encodes the control flow as a graph or a flow, and the LLM is called
 only inside the nodes the developer wrote. Predictability is the point; it matters
@@ -21,7 +21,7 @@ most for autonomous agents, where no human is in the loop to catch a
 model-chosen path that goes sideways. LangGraph and CrewAI are the reference
 implementations of this shape.
 
-The question this ADR closes: does AgentOS support workflow-controlled agents,
+The question this ADR closes: does Curie support workflow-controlled agents,
 and if so, at what depth?
 
 Facts that constrain the answer (all verified against current framework docs and
@@ -52,7 +52,7 @@ source, 2026-07-16):
   LangGraph agents are evaluated with `agentevals`/`openevals` — open-source pip
   packages that run trajectory-match and LLM-as-judge **without a LangSmith
   account**. CrewAI has `crew.test()` (per-task LLM-judge, 1–10). Both score the
-  same shape AgentOS's own `TrajectoryScorer` scores (ADR-0022).
+  same shape Curie's own `TrajectoryScorer` scores (ADR-0022).
 - **Telemetry is OTLP-reachable without us.** OpenInference and OpenLLMetry emit
   standard OTLP for both frameworks to any collector; CrewAI reaches arbitrary
   collectors via OpenLIT. (CrewAI also phones home to `telemetry.crewai.com:4319`
@@ -61,19 +61,19 @@ source, 2026-07-16):
   Postgres + Redis + eval UI + tracing) and CrewAI AMP / Enterprise "Factory"
   (Helm-deployed) are commercial, license-gated products. The library is
   OSS; the hosted vertical that runs it in production is not. **This is what
-  AgentOS would actually compete with** — not the free library.
+  Curie would actually compete with** — not the free library.
 
 Three integration shapes fall out of these facts:
 
 - **A — bare substrate.** Run the framework process in the sandbox; provide
   egress/secrets/k8s/security. The developer owns orchestration, evals, telemetry.
 - **B — ACI adapter (unified plane).** Ship a per-framework in-pod shim that
-  translates the framework's event stream into the AgentOS ACI wire protocol, so
+  translates the framework's event stream into the Curie ACI wire protocol, so
   `TrajectoryScorer` evals, side-effect gating, and telemetry work over a
   framework-authored workflow — one control plane across a heterogeneous fleet.
 - **C — inverted (callable step).** The developer's deterministic workflow is the
   *outer* loop; at each open-ended-AI or gated-side-effect step, a node/task calls
-  *into* an AgentOS sandbox to run a model-controlled turn as one unit of work.
+  *into* a Curie sandbox to run a model-controlled turn as one unit of work.
 
 Prior decisions frame this:
 
@@ -93,7 +93,7 @@ Prior decisions frame this:
 
 ## Decision
 
-**AgentOS supports workflow-controlled agents by being the substrate their
+**Curie supports workflow-controlled agents by being the substrate their
 workflow runs on and calls into — an open, hardened, self-hosted alternative to
 the vendor vertical — NOT by swapping LangGraph/CrewAI in as a harness behind
 `ModelSession`.** We commit to **C now** and hold **B as a demand-gated phase 2**.
@@ -105,8 +105,8 @@ Concretely:
    `ModelSession` refactor, no per-framework event translation, and no dependency
    on ADR-0031. The developer keeps their LangGraph/CrewAI workflow verbatim; at
    the steps that need open-ended AI or a gated side effect, they call the
-   existing AgentOS API to run a sandboxed, approval-gated turn and fold the
-   result back into their graph state. This delivers the two things AgentOS has
+   existing Curie API to run a sandboxed, approval-gated turn and fold the
+   result back into their graph state. This delivers the two things Curie has
    that the vendor vertical does not — a gVisor-hardened, egress-controlled
    sandbox (free the moment the process runs in the pod, per A) and secure
    coordinated approval (ADR-0033) — at near-zero incremental build cost.
@@ -119,14 +119,14 @@ Concretely:
 3. **B is deferred and explicitly gated.** The full ACI adapter — the "single pane
    of glass over a heterogeneous agent fleet" — is built only when **all** of:
    (a) ADR-0031's harness-neutral seams have landed (B has no clean home until
-   then); (b) a concrete customer needs AgentOS to be the single eval/observability
+   then); (b) a concrete customer needs Curie to be the single eval/observability
    plane over framework-authored *and* model-controlled agents together; and
-   (c) AgentOS's eval story is demonstrably better than the free, standalone
+   (c) Curie's eval story is demonstrably better than the free, standalone
    `agentevals`/`openevals` — otherwise B re-plumbs tooling the framework user
    already has. Absent (b) and (c), B duplicates free capability at high cost.
 
 4. **The comparison is against the vendor vertical, not the OSS library.** B's and
-   C's value is measured against LangGraph Platform / CrewAI AMP — where AgentOS
+   C's value is measured against LangGraph Platform / CrewAI AMP — where Curie
    wins on open/self-hosted, sandbox hardening, and secure coordinated approval —
    not against the free `kickoff()`/`compile()` library, against which we add
    nothing.
@@ -137,7 +137,7 @@ Concretely:
 unified eval/telemetry plane only when a customer pays for that and our eval beats
 the free tools.** Skills do not transfer (there is no skill concept in these
 frameworks) and telemetry stays the developer's, reachable through the OTLP
-collector AgentOS already runs. The differentiators are the sandbox and the
+collector Curie already runs. The differentiators are the sandbox and the
 approval gate — and C delivers both without the B plumbing. Build C; hold B behind
 ADR-0031 and demand.
 
@@ -180,7 +180,7 @@ B is not "write an adapter" — it is a second runtime path through the runner:
   value (managed HITL, eval UI, tracing).
 
 - **Do nothing / stay model-controlled only.** *Rejected:* workflow-controlled is
-  a real and growing architecture for autonomous agents, and C lets AgentOS serve
+  a real and growing architecture for autonomous agents, and C lets Curie serve
   it with capability the platform already has. Declining it forfeits the
   deterministic-workflow segment for no saving, since C is nearly free.
 
@@ -195,10 +195,10 @@ B is not "write an adapter" — it is a second runtime path through the runner:
   ADR-0028 flags a speculative substrate.
 - **Skills are out of scope for both** and this is recorded, not treated as a gap:
   the frameworks have no skill concept, so there is nothing to port.
-- **Telemetry stays the developer's**, with AgentOS offering its OTLP collector as
+- **Telemetry stays the developer's**, with Curie offering its OTLP collector as
   the sink (one `openlit.init()` / OTEL env var on their side). We do not build a
   worse path to telemetry via the ACI adapter.
-- **Positioning is settled**: against the framework verticals AgentOS markets the
+- **Positioning is settled**: against the framework verticals Curie markets the
   hardened sandbox and secure coordinated approval (and, if B ships, the unified
   plane) — not "we can run your LangGraph."
 - **Revisiting is expected**: a funded single-plane requirement, plus ADR-0031

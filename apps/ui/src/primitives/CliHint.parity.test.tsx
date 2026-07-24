@@ -230,10 +230,10 @@ describe("console/CLI parity registry (#280)", () => {
     for (const action of WIRED_ACTIONS) {
       if ("command" in action.mapping) {
         // Resolves against the manifest without throwing, and yields an
-        // `agentos …` invocation. `cliCommand` throws on an unknown path, so
+        // `curie …` invocation. `cliCommand` throws on an unknown path, so
         // this catches a command id that is not a real manifest leaf.
         const rendered = cliCommand(action.mapping.command);
-        expect(rendered.startsWith("agentos ")).toBe(true);
+        expect(rendered.startsWith("curie ")).toBe(true);
       } else {
         // The honest gap: a tracking-issue URL, not an empty string.
         expect(action.mapping.noCliEquivalent).toMatch(/^https?:\/\//);
@@ -325,9 +325,9 @@ describe("CliHint — noCliEquivalent amber state (#280)", () => {
   });
 
   it("still renders the copy affordance for a real command", () => {
-    renderHint(<CliHint command="agentos cluster deploy" />);
+    renderHint(<CliHint command="curie cluster deploy" />);
     expect(
-      screen.getByRole("button", { name: "Copy command: agentos cluster deploy" }),
+      screen.getByRole("button", { name: "Copy command: curie cluster deploy" }),
     ).toBeInTheDocument();
   });
 });

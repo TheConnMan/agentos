@@ -1,7 +1,7 @@
 """Unit table for the shared operator-gate normalization helpers (#703).
 
 ``effective_operator_gate(bundle_name, servers, name)`` maps an operator-supplied
-``AGENTOS_APPROVAL_REQUIRED_TOOLS`` name to the effective runtime tool name the SDK
+``CURIE_APPROVAL_REQUIRED_TOOLS`` name to the effective runtime tool name the SDK
 plugin-prefixes a bundle MCP tool to, returning the rewritten effective name, the
 name verbatim when it needs no rewrite (a built-in or an already-effective name),
 or ``None`` when it is an unresolvable ``mcp__`` shorthand (the caller fails

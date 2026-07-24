@@ -1,6 +1,6 @@
-//! `agentos skill eval`: run the bundle's eval cases through the local runner.
+//! `curie skill eval`: run the bundle's eval cases through the local runner.
 //!
-//! Cases live in `evals/cases.json` (seeded by `agentos init`): a suite OBJECT
+//! Cases live in `evals/cases.json` (seeded by `curie init`): a suite OBJECT
 //! `{name, cases: [{id, input, grader}]}`, where each grader is one of
 //! `kind: exact | contains | regex | tool_called` with an `expected` string and
 //! an optional `case_sensitive` flag. The three text matchers grade the final
@@ -14,8 +14,8 @@
 
 use std::path::Path;
 
-use agentos_aci_protocol::{OutboundEvent, SessionStatus};
 use anyhow::{anyhow, bail, Context, Result};
+use curie_aci_protocol::{OutboundEvent, SessionStatus};
 use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 
@@ -124,7 +124,7 @@ pub struct EvalCase {
     pub input: String,
     pub grader: Grader,
     /// Per-case isolation opt-out (#550). Each case runs in a *fresh
-    /// conversation* by default (`false`): `agentos skill eval` resets the runner
+    /// conversation* by default (`false`): `curie skill eval` resets the runner
     /// before the case so it cannot answer from an earlier case's history instead
     /// of actually invoking its tools -- a false green for a side-effecting agent,
     /// and a silent order-dependence in the suite. Set `true` to deliberately
@@ -364,7 +364,7 @@ pub fn rollup_line(passed: usize, failed: usize, plumbing_ok: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentos_aci_protocol::PROTOCOL_VERSION;
+    use curie_aci_protocol::PROTOCOL_VERSION;
 
     fn grader(kind: GraderKind, expected: &str, case_sensitive: bool) -> Grader {
         Grader {
@@ -687,7 +687,7 @@ mod tests {
 
     #[test]
     fn loads_the_committed_weather_example() {
-        // The exact bytes `agentos skill eval` reads on `examples/weather`.
+        // The exact bytes `curie skill eval` reads on `examples/weather`.
         let body = include_str!("../../examples/weather/evals/cases.json");
         let (_dir, path) = write(body);
         let suite = load_suite(&path).unwrap();

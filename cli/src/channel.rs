@@ -1,8 +1,8 @@
-//! Terminal adapter for the rendering-neutral `agentos-reply` channel contract.
+//! Terminal adapter for the rendering-neutral `curie-reply` channel contract.
 
 use serde::Deserialize;
 
-pub const REPLY_FENCE: &str = "```agentos-reply";
+pub const REPLY_FENCE: &str = "```curie-reply";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalAction {
@@ -259,7 +259,7 @@ mod tests {
         include_str!("../../packages/channel-protocol/schema/channel-protocol.corpus.json");
 
     fn fenced(message: &serde_json::Value) -> String {
-        format!("```agentos-reply\n{message}\n```")
+        format!("```curie-reply\n{message}\n```")
     }
 
     #[test]
@@ -292,19 +292,19 @@ mod tests {
     #[test]
     fn choice_renders_labels_but_preserves_values() {
         let message = parse_terminal_message(
-            "```agentos-reply\n{\"version\":\"1.0\",\"text\":\"Pick one\",\"interaction\":{\"kind\":\"choice\",\"id\":\"repo\",\"prompt\":\"Repository\",\"options\":[{\"label\":\"AgentOS\",\"value\":\"curie-eng/agentos\"}]}}\n```",
+            "```curie-reply\n{\"version\":\"1.0\",\"text\":\"Pick one\",\"interaction\":{\"kind\":\"choice\",\"id\":\"repo\",\"prompt\":\"Repository\",\"options\":[{\"label\":\"Curie\",\"value\":\"curie-eng/curie\"}]}}\n```",
         )
         .unwrap();
         assert_eq!(message.lines, ["Pick one"]);
-        assert_eq!(message.actions[0].label, "AgentOS");
-        assert_eq!(message.actions[0].value, "curie-eng/agentos");
+        assert_eq!(message.actions[0].label, "Curie");
+        assert_eq!(message.actions[0].value, "curie-eng/curie");
         assert!(message.allow_free_text);
     }
 
     #[test]
     fn confirm_disables_free_text_by_default() {
         let message = parse_terminal_message(
-            "```agentos-reply\n{\"version\":\"1.0\",\"text\":\"Deploy?\",\"interaction\":{\"kind\":\"confirm\",\"id\":\"deploy\",\"prompt\":\"Deploy?\",\"confirm\":{\"label\":\"Deploy\",\"value\":\"deploy\"},\"cancel\":{\"label\":\"Cancel\",\"value\":\"cancel\"}}}\n```",
+            "```curie-reply\n{\"version\":\"1.0\",\"text\":\"Deploy?\",\"interaction\":{\"kind\":\"confirm\",\"id\":\"deploy\",\"prompt\":\"Deploy?\",\"confirm\":{\"label\":\"Deploy\",\"value\":\"deploy\"},\"cancel\":{\"label\":\"Cancel\",\"value\":\"cancel\"}}}\n```",
         )
         .unwrap();
         assert!(!message.allow_free_text);
@@ -314,11 +314,11 @@ mod tests {
     #[test]
     fn rejects_native_widgets_and_unknown_versions() {
         assert!(parse_terminal_message(
-            "```agentos-reply\n{\"version\":\"1.0\",\"text\":\"x\",\"blocks\":[]}\n```"
+            "```curie-reply\n{\"version\":\"1.0\",\"text\":\"x\",\"blocks\":[]}\n```"
         )
         .is_none());
         assert!(parse_terminal_message(
-            "```agentos-reply\n{\"version\":\"2.0\",\"text\":\"x\"}\n```"
+            "```curie-reply\n{\"version\":\"2.0\",\"text\":\"x\"}\n```"
         )
         .is_none());
     }

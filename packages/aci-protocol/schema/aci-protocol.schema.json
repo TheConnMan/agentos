@@ -131,7 +131,7 @@
       "type": "object"
     },
     "BootEnv": {
-      "description": "The full worker-to-runner boot env: the ACI session plus platform ops.\n\n``session`` COMPOSES the frozen ``SessionConfig`` rather than extending it.\nThat nesting is the ACI-vs-platform boundary: a runner token, approval\nplumbing, and a history port are AgentOS platform operations, not the\ninterface a third-party ACI-conformant runner implements. Inheriting would\ntell every future implementer otherwise (ADR-0049).\n\n**Multiple producers, one consumer.** The boot env is assembled by the worker\nbinding, the worker kernel's resume overlay, the substrate (chart/docker),\nand the operator; only the runner consumes it. So ``from_env`` is the single\nconsumer parse of the whole union, while rendering is per-producer: there is\ndeliberately no whole-model ``to_env`` on the wire path. ``render_worker`` is\nthe one real render surface; ``to_env`` exists for round-trip checks only.\n\n**Authority, not arity, is the invariant.** ``AGENTOS_SANDBOX_ID`` and\n``AGENTOS_RUNNER_PORT`` are substrate-authoritative: identity derives from\nthe pod name (``fieldRef: metadata.name``), and because the chart sets\n``envVarsInjectionPolicy: Overrides`` a worker write would REPLACE it and\nbreak the \"pod name IS the sandbox id\" invariant that trace stamping relies\non. ``ANTHROPIC_BASE_URL`` is also multi-producer, but there the worker is\nauthoritative and worker-wins is the intended layering: the chart branch is a\nbaked template default, the worker's value is per-agent model routing. Do not\ncollapse either producer list to a single value.",
+      "description": "The full worker-to-runner boot env: the ACI session plus platform ops.\n\n``session`` COMPOSES the frozen ``SessionConfig`` rather than extending it.\nThat nesting is the ACI-vs-platform boundary: a runner token, approval\nplumbing, and a history port are Curie platform operations, not the\ninterface a third-party ACI-conformant runner implements. Inheriting would\ntell every future implementer otherwise (ADR-0049).\n\n**Multiple producers, one consumer.** The boot env is assembled by the worker\nbinding, the worker kernel's resume overlay, the substrate (chart/docker),\nand the operator; only the runner consumes it. So ``from_env`` is the single\nconsumer parse of the whole union, while rendering is per-producer: there is\ndeliberately no whole-model ``to_env`` on the wire path. ``render_worker`` is\nthe one real render surface; ``to_env`` exists for round-trip checks only.\n\n**Authority, not arity, is the invariant.** ``CURIE_SANDBOX_ID`` and\n``CURIE_RUNNER_PORT`` are substrate-authoritative: identity derives from\nthe pod name (``fieldRef: metadata.name``), and because the chart sets\n``envVarsInjectionPolicy: Overrides`` a worker write would REPLACE it and\nbreak the \"pod name IS the sandbox id\" invariant that trace stamping relies\non. ``ANTHROPIC_BASE_URL`` is also multi-producer, but there the worker is\nauthoritative and worker-wins is the intended layering: the chart branch is a\nbaked template default, the worker's value is per-agent model routing. Do not\ncollapse either producer list to a single value.",
       "properties": {
         "api_backend": {
           "anyOf": [
@@ -143,7 +143,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_MODEL_API_BACKEND",
+          "env": "CURIE_MODEL_API_BACKEND",
           "producer": [
             "worker"
           ],
@@ -159,7 +159,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_APPROVAL_DECISION",
+          "env": "CURIE_APPROVAL_DECISION",
           "producer": [
             "kernel"
           ],
@@ -175,7 +175,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_APPROVAL_GRANT_TOOL",
+          "env": "CURIE_APPROVAL_GRANT_TOOL",
           "producer": [
             "kernel"
           ],
@@ -194,7 +194,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_APPROVAL_REQUIRED_TOOLS",
+          "env": "CURIE_APPROVAL_REQUIRED_TOOLS",
           "producer": [
             "worker"
           ],
@@ -210,7 +210,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_APPROVAL_RESUMED_KIND",
+          "env": "CURIE_APPROVAL_RESUMED_KIND",
           "producer": [
             "kernel"
           ],
@@ -243,7 +243,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_BUNDLE_REF",
+          "env": "CURIE_BUNDLE_REF",
           "producer": [
             "worker"
           ],
@@ -262,7 +262,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_CONNECTOR_SECRET_KEYS",
+          "env": "CURIE_CONNECTOR_SECRET_KEYS",
           "producer": [
             "worker"
           ],
@@ -278,7 +278,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_FAKE_MODEL",
+          "env": "CURIE_FAKE_MODEL",
           "producer": [
             "worker",
             "substrate"
@@ -295,7 +295,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_HISTORY_MAX_BYTES",
+          "env": "CURIE_HISTORY_MAX_BYTES",
           "producer": [
             "operator"
           ],
@@ -311,7 +311,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_HISTORY_MAX_TURNS",
+          "env": "CURIE_HISTORY_MAX_TURNS",
           "producer": [
             "operator"
           ],
@@ -327,7 +327,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_HISTORY_REF",
+          "env": "CURIE_HISTORY_REF",
           "producer": [
             "worker"
           ],
@@ -343,7 +343,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_HISTORY_TOKEN",
+          "env": "CURIE_HISTORY_TOKEN",
           "producer": [
             "worker"
           ],
@@ -359,7 +359,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_MAX_TURNS",
+          "env": "CURIE_MAX_TURNS",
           "producer": [
             "operator"
           ],
@@ -375,7 +375,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_MEMORY_TOKEN",
+          "env": "CURIE_MEMORY_TOKEN",
           "producer": [
             "worker"
           ],
@@ -391,7 +391,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_MODEL",
+          "env": "CURIE_MODEL",
           "producer": [
             "worker",
             "substrate"
@@ -408,7 +408,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_MODEL_ENV_KEY",
+          "env": "CURIE_MODEL_ENV_KEY",
           "producer": [
             "worker"
           ],
@@ -424,7 +424,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_RUNNER_PORT",
+          "env": "CURIE_RUNNER_PORT",
           "producer": [
             "substrate"
           ],
@@ -440,7 +440,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_RUNNER_TOKEN",
+          "env": "CURIE_RUNNER_TOKEN",
           "producer": [
             "worker"
           ],
@@ -459,7 +459,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_STATE_TOKEN",
+          "env": "CURIE_STATE_TOKEN",
           "producer": [
             "worker"
           ],
@@ -475,7 +475,7 @@
             }
           ],
           "default": null,
-          "env": "AGENTOS_STATE_URL",
+          "env": "CURIE_STATE_URL",
           "producer": [
             "worker"
           ],
@@ -489,7 +489,7 @@
       "type": "object"
     },
     "Budget": {
-      "description": "Per-agent budget spec, carried as JSON in AGENTOS_BUDGET.\n\n``task_budget_hint`` is the optional hint passed through to the model so it\nself paces (section 6b); it is not a hard ceiling.",
+      "description": "Per-agent budget spec, carried as JSON in CURIE_BUDGET.\n\n``task_budget_hint`` is the optional hint passed through to the model so it\nself paces (section 6b); it is not a hard ceiling.",
       "properties": {
         "max_output_tokens_per_run": {
           "title": "Max Output Tokens Per Run",
@@ -1002,7 +1002,7 @@
       "type": "object"
     },
     "SessionConfig": {
-      "description": "The typed session setup contract.\n\n``credentials_ref`` is a reference to injected secrets (AGENTOS_CREDENTIALS);\nsection 0 describes these as per-tool secrets via K8s Secret refs, so the\ncontract carries the reference, not the secret material itself.",
+      "description": "The typed session setup contract.\n\n``credentials_ref`` is a reference to injected secrets (CURIE_CREDENTIALS);\nsection 0 describes these as per-tool secrets via K8s Secret refs, so the\ncontract carries the reference, not the secret material itself.",
       "properties": {
         "budget": {
           "$ref": "#/$defs/Budget"
@@ -1177,8 +1177,8 @@
       "type": "object"
     }
   },
-  "$id": "https://curie.tech/agentos/aci-protocol.schema.json",
+  "$id": "https://curietech.ai/schemas/aci-protocol.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocolVersion": "0.2.6",
-  "title": "ACI Protocol v0.2.6"
+  "protocolVersion": "0.2.7",
+  "title": "ACI Protocol v0.2.7"
 }

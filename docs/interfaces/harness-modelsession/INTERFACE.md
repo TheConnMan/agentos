@@ -11,8 +11,8 @@ epic_note: folds into
 ---
 # INTERFACE: Harness in-process (`ModelSession`)
 
-> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+> Part of the Curie swappable-seam catalog — see the [seam index](../../interfaces.md).
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 + fake &nbsp;·&nbsp; **Swap-readiness grade:** A-
 <!-- END GENERATED: header -->
 
@@ -36,42 +36,42 @@ first-class Protocol operations, not emulated.
 ## Current contract
 
 A second harness must supply an object satisfying `ModelSession`
-(`runner/src/agentos_runner/adapter.py::ModelSession`), a five-method `Protocol`:
+(`runner/src/curie_runner/adapter.py::ModelSession`), a five-method `Protocol`:
 
-- `async def connect(self) -> None` (`runner/src/agentos_runner/adapter.py::ModelSession.connect`) — start/attach the harness,
+- `async def connect(self) -> None` (`runner/src/curie_runner/adapter.py::ModelSession.connect`) — start/attach the harness,
   rehydrating if a resume ref is configured.
-- `async def query(self, text: str) -> None` (`runner/src/agentos_runner/adapter.py::ModelSession.query`) — push a user message;
+- `async def query(self, text: str) -> None` (`runner/src/curie_runner/adapter.py::ModelSession.query`) — push a user message;
   a `query` issued while a turn is live is the mid-run **steer**.
-- `def receive_turn(self) -> AsyncIterator[Any]` (`runner/src/agentos_runner/adapter.py::ModelSession.receive_turn`) — yield the harness
+- `def receive_turn(self) -> AsyncIterator[Any]` (`runner/src/curie_runner/adapter.py::ModelSession.receive_turn`) — yield the harness
   messages for the current turn, ending at its terminal result.
-- `async def interrupt(self) -> None` (`runner/src/agentos_runner/adapter.py::ModelSession.interrupt`) — native hard stop at the next
+- `async def interrupt(self) -> None` (`runner/src/curie_runner/adapter.py::ModelSession.interrupt`) — native hard stop at the next
   safe boundary.
-- `async def close(self) -> None` (`runner/src/agentos_runner/adapter.py::ModelSession.close`) — tear down.
+- `async def close(self) -> None` (`runner/src/curie_runner/adapter.py::ModelSession.close`) — tear down.
 
 The messages a `receive_turn` iterator yields must be mappable by
-`translate_message` (`runner/src/agentos_runner/translate.py::translate_message`) into the ACI
+`translate_message` (`runner/src/curie_runner/translate.py::translate_message`) into the ACI
 outbound union (`TextDelta` / `ToolNote` / `SideEffectFlag` / `ErrorEvent` /
 `Final`). Today those messages are the concrete `claude_agent_sdk` dataclasses; the
 neutral `TurnEvent` payload that would decouple the port from the SDK shape is #307/#315,
 not yet shipped. Session options are assembled by `build_options`
-(`runner/src/agentos_runner/adapter.py::build_options`). Since #245 / ADR-0010 the permission
+(`runner/src/curie_runner/adapter.py::build_options`). Since #245 / ADR-0010 the permission
 posture is conditional, not pinned: with an approval `can_use_tool` callback the session
 runs in `permission_mode="default"` so each tool call is gated, and only an unconfigured
 agent (no callback) keeps the historical `"bypassPermissions"` verbatim
-(`runner/src/agentos_runner/adapter.py::build_options`).
+(`runner/src/curie_runner/adapter.py::build_options`).
 
 ## Implementations today
 
-Two, both in `runner/src/agentos_runner/`:
+Two, both in `runner/src/curie_runner/`:
 
-- **Real:** `ClaudeAgentSession` (`runner/src/agentos_runner/adapter.py::ClaudeAgentSession`), wrapping `ClaudeSDKClient` in
+- **Real:** `ClaudeAgentSession` (`runner/src/curie_runner/adapter.py::ClaudeAgentSession`), wrapping `ClaudeSDKClient` in
   streaming-input mode; `receive_turn` delegates to `self._client.receive_response()`
-  (`runner/src/agentos_runner/adapter.py::ClaudeAgentSession.receive_turn`) and `interrupt` to `self._client.interrupt()`
-  (`runner/src/agentos_runner/adapter.py::ClaudeAgentSession.interrupt`).
-- **Fake:** `FakeModelSession` (`runner/src/agentos_runner/fake.py::FakeModelSession`), a scripted
+  (`runner/src/curie_runner/adapter.py::ClaudeAgentSession.receive_turn`) and `interrupt` to `self._client.interrupt()`
+  (`runner/src/curie_runner/adapter.py::ClaudeAgentSession.interrupt`).
+- **Fake:** `FakeModelSession` (`runner/src/curie_runner/fake.py::FakeModelSession`), a scripted
   replayer that constructs real SDK message dataclasses. It is the reusable acceptance
-  harness: `conformance_producer` (`runner/src/agentos_runner/conformance.py::conformance_producer`) drives
-  a real `SessionRunner` over the fake (`runner/src/agentos_runner/conformance.py::_build_runner`), so the ACI conformance gate
+  harness: `conformance_producer` (`runner/src/curie_runner/conformance.py::conformance_producer`) drives
+  a real `SessionRunner` over the fake (`runner/src/curie_runner/conformance.py::_build_runner`), so the ACI conformance gate
   validates the actual translation/final plumbing, not a canned stream.
 
 ## Known leakage

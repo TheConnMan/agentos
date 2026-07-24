@@ -10,7 +10,7 @@ reuses the fail-closed, forward-by-name model-credential path
 `cli/tests/vectors/model-credential-forwarding.json`, ADR-referenced by #495)
 without changing it. Supersedes nothing.
 
-Closes the first half of [#749](https://github.com/curie-eng/agentos/issues/749)
+Closes the first half of [#749](https://github.com/curie-eng/curie/issues/749)
 ("credential and Slack wiring is manual shell plumbing"): the model-credential
 side. Persisting Slack tokens for the local worker, and extending pickup to the
 compose-tier (`local up`) credential path and to `--secret` connector tokens,
@@ -19,9 +19,9 @@ are deliberately deferred as follow-ups (see Consequences).
 ## Context
 
 To run a bundle live, the model credential must be exported into the invoking
-shell before `agentos skill up` / `agentos local up`. AgentOS reads
-`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` / `AGENTOS_CREDENTIALS` from the
-process env plus its own secret vault (`agentos secrets set`), but it does **not**
+shell before `curie skill up` / `curie local up`. Curie reads
+`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` / `CURIE_CREDENTIALS` from the
+process env plus its own secret vault (`curie secrets set`), but it does **not**
 read a bundle's own `.env` — even though that file already holds the key (the
 older `make serve` flow auto-loaded it). So the operator runs
 `set -a; source .env; set +a` before `skill up`, and repeats it after every
@@ -53,13 +53,13 @@ Two constraints shape the fix:
 - The bundle `.env` is a last-resort convenience and is consulted only for a
   credential name that is absent from **both** the shell env and the vault.
 
-**Opt-in via `agentos skill up --env-file <PATH>`.** No path, no `.env` read —
+**Opt-in via `curie skill up --env-file <PATH>`.** No path, no `.env` read —
 the flag is the explicit gesture. The mechanism reuses the existing
 `docker_env` fallback lane: recognized credential values parsed from the file
 are appended *after* the vault-hydrated entries and only for names not already
 supplied, so `select_passthrough_env` — the frozen authority on what is
 actually forwarded — is untouched. Only the recognized credential names
-(`AGENTOS_CREDENTIALS`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) are read
+(`CURIE_CREDENTIALS`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) are read
 from the file; every other key in the dotfile is ignored, never injected. This
 retires the dead `dotenvy` dependency.
 
@@ -72,7 +72,7 @@ surgical.
 
 ## Consequences
 
-- `agentos skill up --env-file .env` boots live with no `source` step, and the
+- `curie skill up --env-file .env` boots live with no `source` step, and the
   credential still never appears in argv (forwarded by name; the value reaches
   only the Docker CLI child so it can copy it into the container).
 - The precedence is now stated and enforced at one site, not rediscovered.

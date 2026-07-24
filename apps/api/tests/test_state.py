@@ -7,8 +7,8 @@ disposable-DB conftest provisions and migrates a throwaway database per run).
 import uuid
 from typing import Any
 
-from agentos_api.config import get_settings
-from agentos_api.sandbox_token import mint
+from curie_api.config import get_settings
+from curie_api.sandbox_token import mint
 
 # Scoped-sandbox-token auth matrix constants (#410).
 _FAR_FUTURE = 4102444800  # 2100-01-01, valid at test time
@@ -134,7 +134,7 @@ def test_app_scoped_token_is_refused_on_reserved_namespaces(
     # #249 security backstop: the bundle-facing state token is the NARROW
     # ``state.app`` scope, and the server refuses it on the memory/transcript
     # namespaces owned by the memory (#264) and history (#20) ports -- so a skill
-    # cannot corrupt them by composing AGENTOS_STATE_URL directly, bypassing the
+    # cannot corrupt them by composing CURIE_STATE_URL directly, bypassing the
     # runner tool's own client-side refusal.
     aid = _agent(client, auth_headers)
     app = mint(get_settings().api_key, agent=aid, scope="state.app", exp=_FAR_FUTURE)
@@ -360,7 +360,7 @@ def test_append_onto_a_non_array_value_is_409(
 def test_value_over_the_per_value_cap_is_rejected(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:
-    from agentos_api.config import get_settings
+    from curie_api.config import get_settings
 
     aid = _agent(client, auth_headers)
     # Shrink the per-value cap for this test. get_settings() is lru_cached, so it
@@ -384,7 +384,7 @@ def test_value_over_the_per_value_cap_is_rejected(
 def test_namespace_over_the_per_namespace_cap_is_rejected(
     client: Any, auth_headers: dict[str, str], clean_db: None
 ) -> None:
-    from agentos_api.config import get_settings
+    from curie_api.config import get_settings
 
     aid = _agent(client, auth_headers)
     base = f"/agents/{aid}/state/capped"

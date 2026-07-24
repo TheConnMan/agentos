@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from agentos_doclint import SOURCE_EXTENSIONS
+from curie_doclint import SOURCE_EXTENSIONS
 
 from .conftest import Regenerate, RunLint, write
 
@@ -21,12 +21,12 @@ def test_nonexistent_path_fails(clean_repo: Path, run_lint: RunLint) -> None:
     write(
         clean_repo,
         "docs/ghost.md",
-        "The gate lives in `apps/api/src/agentos_api/ghost.py`.\n",
+        "The gate lives in `apps/api/src/curie_api/ghost.py`.\n",
     )
     code, out = run_lint(clean_repo)
     assert code != 0
     assert "docs/ghost.md" in out  # names the offending doc
-    assert "apps/api/src/agentos_api/ghost.py" in out  # names the citation
+    assert "apps/api/src/curie_api/ghost.py" in out  # names the citation
     assert "does not exist" in out.lower()  # names the reason
 
 
@@ -85,7 +85,7 @@ def test_shorthand_partner_full_path_passes(clean_repo: Path, run_lint: RunLint)
     write(
         clean_repo,
         "docs/full.md",
-        "The builder is `runner/src/agentos_runner/approval.py::build_options`.\n",
+        "The builder is `runner/src/curie_runner/approval.py::build_options`.\n",
     )
     code, _ = run_lint(clean_repo)
     assert code == 0
@@ -178,7 +178,7 @@ def test_link_target_disagreeing_with_cited_path_fails(
         clean_repo,
         "ARCHITECTURE.md",
         "The gate is a "
-        "([`runner/src/agentos_runner/approval.py::ApprovalGate`](cli/src/queue.rs)).\n",
+        "([`runner/src/curie_runner/approval.py::ApprovalGate`](cli/src/queue.rs)).\n",
     )
     code, out = run_lint(clean_repo)
     assert code != 0
@@ -196,8 +196,8 @@ def test_link_target_matching_cited_path_passes(
         clean_repo,
         "ARCHITECTURE.md",
         "The gate is a "
-        "([`runner/src/agentos_runner/approval.py::ApprovalGate`]"
-        "(runner/src/agentos_runner/approval.py)).\n",
+        "([`runner/src/curie_runner/approval.py::ApprovalGate`]"
+        "(runner/src/curie_runner/approval.py)).\n",
     )
     code, _ = run_lint(clean_repo)
     assert code == 0
@@ -214,8 +214,8 @@ def test_link_target_root_relative_href_from_nested_doc_passes(
         clean_repo,
         "docs/subsystem/notes.md",
         "The gate is a "
-        "([`runner/src/agentos_runner/approval.py::ApprovalGate`]"
-        "(/runner/src/agentos_runner/approval.py)).\n",
+        "([`runner/src/curie_runner/approval.py::ApprovalGate`]"
+        "(/runner/src/curie_runner/approval.py)).\n",
     )
     code, out = run_lint(clean_repo)
     assert code == 0, out
@@ -231,9 +231,9 @@ def test_link_target_external_url_href_passes(
         clean_repo,
         "docs/subsystem/notes.md",
         "The gate is a "
-        "([`runner/src/agentos_runner/approval.py::ApprovalGate`]"
-        "(https://github.com/curie-eng/agentos/blob/main/"
-        "runner/src/agentos_runner/approval.py)).\n",
+        "([`runner/src/curie_runner/approval.py::ApprovalGate`]"
+        "(https://github.com/curie-eng/curie/blob/main/"
+        "runner/src/curie_runner/approval.py)).\n",
     )
     code, out = run_lint(clean_repo)
     assert code == 0, out
@@ -249,7 +249,7 @@ def test_link_target_root_relative_href_still_catches_real_mismatch(
         clean_repo,
         "docs/subsystem/notes.md",
         "The gate is a "
-        "([`runner/src/agentos_runner/approval.py::ApprovalGate`]"
+        "([`runner/src/curie_runner/approval.py::ApprovalGate`]"
         "(/cli/src/queue.rs)).\n",
     )
     code, out = run_lint(clean_repo)

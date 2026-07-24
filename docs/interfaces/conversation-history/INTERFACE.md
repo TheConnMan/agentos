@@ -10,9 +10,9 @@ order: 16
 
 # INTERFACE: Conversation history
 
-> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
+> Part of the Curie swappable-seam catalog — see the [seam index](../../interfaces.md).
 
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 loader (StateApiTranscriptStore) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 <!-- END GENERATED: header -->
 
@@ -21,7 +21,7 @@ order: 16
 ## The black line
 
 The port is the `TranscriptStore` `Protocol` in
-`runner/src/agentos_runner/history.py` (issue #20, ADR-0029). Two methods:
+`runner/src/curie_runner/history.py` (issue #20, ADR-0029). Two methods:
 
 ```python
 class TranscriptStore(Protocol):
@@ -30,10 +30,10 @@ class TranscriptStore(Protocol):
 ```
 
 A `TurnRecord` is `user: str` plus `assistant: str` (and a `ts`) — one
-conversation turn. `AGENTOS_HISTORY_REF` (a runner-local env, NOT a frozen ACI
+conversation turn. `CURIE_HISTORY_REF` (a runner-local env, NOT a frozen ACI
 `SessionConfig` field) is resolved to a concrete `TranscriptStore` at runner boot
 by `resolve_history`. The state-API bearer is a runner-local knob
-(`AGENTOS_HISTORY_TOKEN`), like `AGENTOS_MEMORY_TOKEN`.
+(`CURIE_HISTORY_TOKEN`), like `CURIE_MEMORY_TOKEN`.
 
 This is the sibling seam of [Memory](../memory/INTERFACE.md): same store, same
 boot-preamble delivery, a different scope. Memory is per-agent durable lessons;
@@ -75,7 +75,7 @@ unplanned-restart case needs no special worker/kernel branch.
 ## Known leakage
 
 - **Scoped history token (was: shared API key).** Same as memory: earlier the
-  state API's one shared platform key was forwarded as `AGENTOS_HISTORY_TOKEN`,
+  state API's one shared platform key was forwarded as `CURIE_HISTORY_TOKEN`,
   granting that key's scope. ADR-0033 (#410) replaced it with a scoped,
   agent-bound, HMAC-signed `state` token minted per turn, accepted only by the
   state router and bound to this agent's namespace, so the sandbox credential can
@@ -83,8 +83,8 @@ unplanned-restart case needs no special worker/kernel branch.
 - **Unbounded append log under the state-store size caps.** A very long thread
   will eventually hit the per-namespace/per-value cap on the stored transcript.
   Delivery-side windowing now bounds the *rehydrated preamble* to a tail window
-  (most-recent turns, byte-capped; `AGENTOS_HISTORY_MAX_TURNS` /
-  `AGENTOS_HISTORY_MAX_BYTES`, overridable) -- but the stored transcript itself
+  (most-recent turns, byte-capped; `CURIE_HISTORY_MAX_TURNS` /
+  `CURIE_HISTORY_MAX_BYTES`, overridable) -- but the stored transcript itself
   stays unwindowed, so the append log still grows unbounded until it hits the
   state-store cap. The replay is a prompt preamble, not a token-exact
   reconstruction, so it does not restore the model's original prompt cache
@@ -94,5 +94,5 @@ unplanned-restart case needs no special worker/kernel branch.
 
 ## Cross-links
 
-- **Issue:** [#20](https://github.com/curie-eng/agentos/issues/20) — transcript persistence across unplanned runner restarts
+- **Issue:** [#20](https://github.com/curie-eng/curie/issues/20) — transcript persistence across unplanned runner restarts
 - **ADR(s):** [ADR-0029](../../adr/0029-conversation-history-port-and-first-loader.md) — the port + first loader; [ADR-0025](../../adr/0025-memory-port-and-first-loader.md) — the sibling memory port; [ADR-0003](../../adr/0003-stateless-first-rehydrate-on-resume.md) — stateless-first; rehydrate on resume; externalize session state

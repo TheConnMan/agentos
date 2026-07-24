@@ -4,7 +4,7 @@ Date: 2026-07-16
 
 Status: Accepted
 
-Implementation tracked in epic [#473](https://github.com/curie-eng/agentos/issues/473).
+Implementation tracked in epic [#473](https://github.com/curie-eng/curie/issues/473).
 
 ## Context
 
@@ -15,8 +15,8 @@ make the routing decision over free-form chat text. Independent of NTT, the
 same mechanism is the cost-optimization lever for any deployment running more
 than one model.
 
-AgentOS has no routing today. Model selection is a boot-time pin
-(`AGENTOS_MODEL`, per-agent override at the worker binding), exactly one model
+Curie has no routing today. Model selection is a boot-time pin
+(`CURIE_MODEL`, per-agent override at the worker binding), exactly one model
 credential resolves (ADR-0009), and the provider is swapped through config,
 not code (the model-provider seam is deliberately SOFT). Three prior decisions
 constrain the design:
@@ -34,7 +34,7 @@ constrain the design:
   environment, nothing more.
 
 ADR-0036 (ACI semver) additionally names the unfrozen env contract that
-shadows `SessionConfig` -- which is where `AGENTOS_MODEL` travels today -- as
+shadows `SessionConfig` -- which is where `CURIE_MODEL` travels today -- as
 a real gap in what "frozen" covers. A routing decision needs a typed home, and
 that home closes part of the named gap.
 
@@ -65,7 +65,7 @@ the named deferred second adapter that validates the port shape (the
 ADR-0026/0027 discipline: extract the port, defer the second adapter).
 
 **2. The manifest declares intent, not models.** An opt-in `routing` block
-joins the existing AgentOS manifest extensions (alongside `secrets`,
+joins the existing Curie manifest extensions (alongside `secrets`,
 ADR-0009): static per-task-type capability floors and constraints (phase 1),
 and optional judge configuration (phase 2). Bundles never name
 install-specific providers or model ids -- bundles are portable and egress
@@ -127,7 +127,7 @@ candidates considered.
 - Multi-credential delivery extends ADR-0009 from connector secrets to model
   credentials; this is the largest single piece of platform work in the epic.
 - The router core (registry schema, floor estimation, Pareto selection) is
-  built as a separable library. The AgentOS binding hook is consumer one; a
+  built as a separable library. The Curie binding hook is consumer one; a
   standalone licensable facade or other platforms are future consumers.
 - Non-LLM route targets (for example OCR pipelines) are the genuinely novel
   slice of the NTT ask -- no shipped router does this -- and are explicitly

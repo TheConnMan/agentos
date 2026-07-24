@@ -7,7 +7,7 @@ Status: Accepted
 
 The umbrella chart vendors the upstream `kubernetes-sigs/agent-sandbox` v0.5.0
 controller (`registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.0`) as
-release manifests under `charts/agentos/files/agent-sandbox/controller.yaml`.
+release manifests under `charts/curie/files/agent-sandbox/controller.yaml`.
 The controller reconciles a shared `NetworkPolicy` per `SandboxTemplate`
 (`extensions/controllers/sandboxtemplate_controller.go:253`,
 `Owns(&networkingv1.NetworkPolicy{})`).

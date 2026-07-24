@@ -10,8 +10,8 @@
         "prompt": "Repository",
         "options": [
           {
-            "label": "AgentOS",
-            "value": "curie-eng/agentos"
+            "label": "Curie",
+            "value": "curie-eng/curie"
           }
         ],
         "allow_free_text": false
@@ -112,8 +112,8 @@
         "prompt": "Repository",
         "options": [
           {
-            "label": "AgentOS",
-            "value": "curie-eng/agentos"
+            "label": "Curie",
+            "value": "curie-eng/curie"
           }
         ],
         "allow_free_text": false
@@ -208,8 +208,8 @@
           "prompt": "Repository",
           "options": [
             {
-              "label": "AgentOS",
-              "value": "curie-eng/agentos"
+              "label": "Curie",
+              "value": "curie-eng/curie"
             }
           ],
           "allow_free_text": false

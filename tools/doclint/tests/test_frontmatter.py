@@ -14,7 +14,7 @@ from .conftest import RunLint, write
 # a CLEAN/2/A front-matter so that only the front-matter defect under test is
 # the reason a run fails.
 _HEADER = (
-    "<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->\n"
+    "<!-- BEGIN GENERATED: header (curie dev docs-lint) -->\n"
     "> **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 2"
     " &nbsp;·&nbsp; **Swap-readiness grade:** A\n"
     "<!-- END GENERATED: header -->\n"

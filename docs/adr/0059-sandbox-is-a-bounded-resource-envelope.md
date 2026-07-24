@@ -12,7 +12,7 @@ establish what a sandbox may *reach*; this one establishes what a sandbox may
 
 ## Context
 
-AgentOS runs a bundle as arbitrary code inside a Kubernetes sandbox. ADR-0006
+Curie runs a bundle as arbitrary code inside a Kubernetes sandbox. ADR-0006
 ships the isolation rails as chart defaults (gVisor, default-deny egress,
 non-root, read-only rootfs), and ADR-0008 decides that compute stays hard-siloed
 at namespace-per-tenant because "executing untrusted, prompt-injectable code that
@@ -22,18 +22,18 @@ Both of those are *reachability* boundaries. Neither bounds consumption, and the
 shipped chart bounds consumption only partially:
 
 - The runner declares `cpu` and `memory` requests/limits
-  ([`charts/agentos/values.yaml`](../../charts/agentos/values.yaml), `runner.resources`)
+  ([`charts/curie/values.yaml`](../../charts/curie/values.yaml), `runner.resources`)
   and **no `ephemeral-storage` request or limit**. No `resources` block anywhere
   in the chart sets one, on any container.
 - Every writable volume in the sandbox pod is an unbounded `emptyDir` with **no
   `sizeLimit`**: the shared `bundles` volume, the init-only `mc-config` volume,
   and one volume per `hardening.writablePaths` entry (`/tmp` and the runner's
   `$HOME` by default), in
-  [`charts/agentos/templates/agent-sandbox.yaml`](../../charts/agentos/templates/agent-sandbox.yaml).
+  [`charts/curie/templates/agent-sandbox.yaml`](../../charts/curie/templates/agent-sandbox.yaml).
   The `SandboxTemplate` CRD supports `sizeLimit`; the chart never sets it.
 - Bundle ingestion is unbounded on both ends. The upload endpoint reads the whole
   body into memory with no size gate
-  ([`apps/api/src/agentos_api/routers/bundles.py`](../../apps/api/src/agentos_api/routers/bundles.py)),
+  ([`apps/api/src/curie_api/routers/bundles.py`](../../apps/api/src/curie_api/routers/bundles.py)),
   and `safe_extract`
   ([`packages/plugin-format/src/plugin_format/archive.py`](../../packages/plugin-format/src/plugin_format/archive.py))
   rejects traversing, link, and special-file entries but enforces **no size and

@@ -38,7 +38,7 @@ def test_generated_rust_guards_the_version() -> None:
 
 
 # ---------------------------------------------------------------------------
-# BootEnv export (#488). The env key (AGENTOS_RUNNER_TOKEN) is not the field
+# BootEnv export (#488). The env key (CURIE_RUNNER_TOKEN) is not the field
 # name (runner_token), so the mapping has to ride in the schema for codegen to
 # emit constants the Rust CLI and the chart assert can pin against.
 # ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ def test_the_schema_forbids_the_worker_from_owning_sandbox_identity_or_port() ->
     A `producer: worker` tag on either key would license exactly the render the
     worker golden forbids (envVarsInjectionPolicy: Overrides, values.yaml:789).
     """
-    for key in ("AGENTOS_SANDBOX_ID", "AGENTOS_RUNNER_PORT"):
+    for key in ("CURIE_SANDBOX_ID", "CURIE_RUNNER_PORT"):
         assert key not in BootEnv.env_keys(producer="worker")
         assert key in BootEnv.env_keys(producer="substrate")
 
@@ -137,22 +137,22 @@ def test_generated_env_keys_module_is_deterministic() -> None:
 
 
 def test_generated_env_keys_are_flattened_to_include_session_and_otel_keys() -> None:
-    """The chart bakes AGENTOS_RUNNER_PORT and the OTel keys into the runner
+    """The chart bakes CURIE_RUNNER_PORT and the OTel keys into the runner
     container itself (agent-sandbox.yaml:430, 433, 435). A const list missing
     the nested SessionConfig/OTel keys fails a default render's subset assert.
     """
     module = _env_keys_module()
     for key in (
-        "AGENTOS_PLUGIN_DIR",
-        "AGENTOS_SESSION_ID",
-        "AGENTOS_SANDBOX_ID",
-        "AGENTOS_BUDGET",
-        "AGENTOS_MEMORY_REF",
-        "AGENTOS_CREDENTIALS",
+        "CURIE_PLUGIN_DIR",
+        "CURIE_SESSION_ID",
+        "CURIE_SANDBOX_ID",
+        "CURIE_BUDGET",
+        "CURIE_MEMORY_REF",
+        "CURIE_CREDENTIALS",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_HEADERS",
         "OTEL_EXPORTER_OTLP_PROTOCOL",
-        "AGENTOS_RUNNER_PORT",
+        "CURIE_RUNNER_PORT",
     ):
         assert f'pub const {key}: &str = "{key}";' in module, (
             f"{key} is reachable in the runner container but absent from env_keys"

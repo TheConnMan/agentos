@@ -5,11 +5,11 @@
 # makes a model call. It boots the runner's scripted FAKE model (offline, no
 # credential, no network) -- a do-nothing agent whose only reply is the canned
 # final "all done" -- and runs every COMMITTED eval suite through the real
-# `agentos skill eval` path. A genuinely falsifiable case (#527) must go RED
+# `curie skill eval` path. A genuinely falsifiable case (#527) must go RED
 # against this do-nothing agent, so the gate FAILS if ANY committed case passes.
 #
 # Suites are discovered, not hardcoded: every examples/*/evals/cases.json plus
-# the `agentos init` scaffold seed at apps/worker/schema/eval-cases.example.json.
+# the `curie init` scaffold seed at apps/worker/schema/eval-cases.example.json.
 # Adding a suite needs no edit here.
 #
 # The input-parrot vacuousness control (AC4) and the positive control (AC2) are
@@ -17,34 +17,34 @@
 # only ever say "all done", so those exemplars cannot be expressed through this
 # real path. Together the two halves are the gate.
 #
-# Requirements: docker + an agentos-runner image (built by CI, or `agentos build`
-# locally). The CLI binary is reused from $AGENTOS_BIN if set+executable, else
+# Requirements: docker + a curie-runner image (built by CI, or `curie build`
+# locally). The CLI binary is reused from $CURIE_BIN if set+executable, else
 # built with cargo. Run from anywhere:
 #
 #   bash cli/scripts/eval-falsifiability.sh
 #
 # Env knobs:
-#   AGENTOS_BIN                path to a prebuilt agentos binary (skip cargo build)
-#   AGENTOS_FALSIFY_IMAGE      runner image (default agentos-runner)
-#   AGENTOS_FALSIFY_PORT       host port (default 7246)
+#   CURIE_BIN                path to a prebuilt curie binary (skip cargo build)
+#   CURIE_FALSIFY_IMAGE      runner image (default curie-runner)
+#   CURIE_FALSIFY_PORT       host port (default 7246)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-IMAGE="${AGENTOS_FALSIFY_IMAGE:-agentos-runner}"
-PORT="${AGENTOS_FALSIFY_PORT:-7246}"
-CONTAINER="agentos-falsifiability-runner"
+IMAGE="${CURIE_FALSIFY_IMAGE:-curie-runner}"
+PORT="${CURIE_FALSIFY_PORT:-7246}"
+CONTAINER="curie-falsifiability-runner"
 BUNDLE="$REPO_ROOT/examples/weather"
 
-echo "=== Resolve the agentos binary ==="
-if [[ -n "${AGENTOS_BIN:-}" && -x "${AGENTOS_BIN:-}" ]]; then
+echo "=== Resolve the curie binary ==="
+if [[ -n "${CURIE_BIN:-}" && -x "${CURIE_BIN:-}" ]]; then
     # Absolutize: the gate cd's into a throwaway dir before invoking the binary,
-    # so a relative $AGENTOS_BIN (as CI passes) must be pinned to an absolute path
+    # so a relative $CURIE_BIN (as CI passes) must be pinned to an absolute path
     # here or it stops resolving after the cd.
-    BIN="$(cd "$(dirname "$AGENTOS_BIN")" && pwd)/$(basename "$AGENTOS_BIN")"
+    BIN="$(cd "$(dirname "$CURIE_BIN")" && pwd)/$(basename "$CURIE_BIN")"
     echo "using prebuilt binary: $BIN"
 else
     (cd "$REPO_ROOT/cli" && cargo build --release --quiet)
-    BIN="$REPO_ROOT/cli/target/release/agentos"
+    BIN="$REPO_ROOT/cli/target/release/curie"
 fi
 "$BIN" --version
 
@@ -66,14 +66,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Mount a throwaway COPY of a valid bundle so the recorded .agentos/runner.json
+# Mount a throwaway COPY of a valid bundle so the recorded .curie/runner.json
 # lands in the temp dir, never in the tree. The fake model ignores the bundle
 # and the input entirely (it only ever replies "all done"), so any valid bundle
 # serves; the eval below dials the runner by explicit --url regardless.
 cp -r "$BUNDLE" "$WORKDIR/bundle"
 
 echo
-echo "=== agentos skill up (fake model, offline) ==="
+echo "=== curie skill up (fake model, offline) ==="
 "$BIN" skill up \
     --plugin-dir "$WORKDIR/bundle" \
     --image "$IMAGE" \
@@ -109,7 +109,7 @@ for suite in "${SUITES[@]}"; do
 done
 
 echo
-echo "=== agentos skill down ==="
+echo "=== curie skill down ==="
 ( cd "$WORKDIR/bundle" && "$BIN" skill down ) || true
 
 if (( FAILED )); then

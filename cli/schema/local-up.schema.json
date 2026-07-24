@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/local-up/v1.json",
-  "title": "agentos local up --json",
-  "description": "The agent-facing payload of `agentos local up`: the dry-run plan, or the started dev stack's advertised endpoints and Slack wiring state.",
+  "$id": "https://schemas.curietech.ai/cli/local-up/v1.json",
+  "title": "curie local up --json",
+  "description": "The agent-facing payload of `curie local up`: the dry-run plan, or the started dev stack's advertised endpoints and Slack wiring state.",
   "$defs": {
     "dryRun": {
       "type": "object",

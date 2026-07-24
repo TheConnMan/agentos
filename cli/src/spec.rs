@@ -1,4 +1,4 @@
-//! `agentos init --from-spec`: the agent-authored spec model + strict parse.
+//! `curie init --from-spec`: the agent-authored spec model + strict parse.
 //!
 //! A coding agent interviews the human and writes a JSON spec; the CLI scaffolds
 //! a runnable bundle from it with zero interactive prompts (ADR-0021 decision 5).
@@ -6,7 +6,7 @@
 //! fails loud rather than silently dropping the intended field -- the verify-first
 //! ethos applied to the spec itself. The `evals` field reuses the frozen
 //! `crate::evals::EvalCase` type directly, so a spec's eval shape is locked to the
-//! same contract `agentos skill eval` loads and cannot drift.
+//! same contract `curie skill eval` loads and cannot drift.
 
 use anyhow::{anyhow, bail, Result};
 use serde::Deserialize;
@@ -221,7 +221,7 @@ fn validate(spec: &AgentSpec) -> Result<()> {
     }
 
     // Reuse the frozen suite-level discipline (empty-cases + regex compile) so a
-    // spec's evals are held to the exact contract `agentos skill eval` enforces.
+    // spec's evals are held to the exact contract `curie skill eval` enforces.
     // Borrow the spec's own name/evals directly rather than cloning them into a
     // throwaway suite purely to validate.
     validate_suite(&spec.name, &spec.evals)?;

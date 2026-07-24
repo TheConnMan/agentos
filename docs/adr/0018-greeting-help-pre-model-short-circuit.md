@@ -7,7 +7,7 @@ Status corrected from `Proposed` under
 [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md): the
 short-circuit is wired. The Context below records that the matchers had "**zero
 live callers**"; they are now called from the kernel itself
-(`apps/worker/src/agentos_worker/kernel.py::Kernel._route_and_start`, which evaluates
+(`apps/worker/src/curie_worker/kernel.py::Kernel._route_and_start`, which evaluates
 `match_greeting(packs, event.text) or match_help(packs, event.text)` under the
 route lock). The Context is left as written — it is the record of what was true
 when the decision was taken.
@@ -17,7 +17,7 @@ when the decision was taken.
 The behavior-packs substrate (ADR-adjacent work, CUR-1586) shipped opt-in,
 per-agent `greeting` and `help` packs: declarative phrase lists plus a canned
 reply. The pure matchers `match_greeting` / `match_help`
-(`apps/worker/src/agentos_worker/behaviorpacks.py`) are implemented and
+(`apps/worker/src/curie_worker/behaviorpacks.py`) are implemented and
 unit-tested but have **zero live callers** — the packs are configurable today but
 never fire. The intended payoff is a strict cost win: a bare "hi" or "help" is
 answered from the already-posted placeholder without claiming a sandbox or

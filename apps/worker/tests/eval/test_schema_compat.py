@@ -3,7 +3,7 @@
 Mirrors packages/plugin-format/tests/test_schema_compat.py.
 """
 
-from agentos_worker.eval.schema_export import render_schema, schema_path
+from curie_worker.eval.schema_export import render_schema, schema_path
 
 
 def test_committed_json_schema_is_current() -> None:

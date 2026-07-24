@@ -1,6 +1,6 @@
 # Verifying a release
 
-Every GitHub release publishes the `agentos` CLI binaries, the Helm chart, and
+Every GitHub release publishes the `curie` CLI binaries, the Helm chart, and
 `compose.release.yaml`. Installing the CLI means running a downloaded binary as
 root and pointing it at a cluster, so verify what you received before you run it.
 
@@ -16,9 +16,9 @@ which shipped bare binaries.
 
 | Asset | What it is |
 |---|---|
-| `agentos-x86_64-unknown-linux-gnu` | CLI binary, Linux x86_64 |
-| `agentos-aarch64-apple-darwin` | CLI binary, macOS Apple silicon |
-| `agentos-<version>.tgz` | packaged Helm chart |
+| `curie-x86_64-unknown-linux-gnu` | CLI binary, Linux x86_64 |
+| `curie-aarch64-apple-darwin` | CLI binary, macOS Apple silicon |
+| `curie-<version>.tgz` | packaged Helm chart |
 | `compose.release.yaml` | the self-contained local stack |
 | `<asset>.spdx.json` | SPDX SBOM, one per asset |
 | `checksums.txt` | sha256 of every file above |
@@ -42,13 +42,13 @@ and its signature:
 
 ```bash
 VERSION=vX.Y.Z          # the release you are installing
-REPO=curie-eng/agentos
+REPO=curie-eng/curie
 # Resolve the right asset for this machine. The release ships Linux x86_64 and
 # macOS Apple silicon; anything else builds from source (see cli/).
 ASSET=
 case "$(uname -s)/$(uname -m)" in
-  Linux/x86_64)                 ASSET=agentos-x86_64-unknown-linux-gnu ;;
-  Darwin/arm64|Darwin/aarch64)  ASSET=agentos-aarch64-apple-darwin ;;
+  Linux/x86_64)                 ASSET=curie-x86_64-unknown-linux-gnu ;;
+  Darwin/arm64|Darwin/aarch64)  ASSET=curie-aarch64-apple-darwin ;;
 esac
 : "${ASSET:?no prebuilt binary for this platform; build the CLI from source in cli/}"
 BASE="https://github.com/$REPO/releases/download/$VERSION"
@@ -81,8 +81,8 @@ sha256sum --check --ignore-missing checksums.txt   # macOS: shasum -a 256 --chec
 **Step 3 -- only now, install it.** Both checks must print OK first:
 
 ```bash
-chmod +x "$ASSET" && sudo mv "$ASSET" /usr/local/bin/agentos
-agentos --version
+chmod +x "$ASSET" && sudo mv "$ASSET" /usr/local/bin/curie
+curie --version
 ```
 
 ## Verify provenance with the GitHub CLI
@@ -93,8 +93,8 @@ asset was built by this repo's release workflow:
 
 ```bash
 gh attestation verify "$ASSET" \
-  --repo curie-eng/agentos \
-  --signer-workflow curie-eng/agentos/.github/workflows/release.yaml \
+  --repo curie-eng/curie \
+  --signer-workflow curie-eng/curie/.github/workflows/release.yaml \
   --source-ref "refs/tags/$VERSION"
 ```
 
@@ -110,15 +110,15 @@ executables, but a tampered chart deploys tampered images:
 
 ```bash
 curl -fsSLO "$BASE/compose.release.yaml"
-curl -fsSLO "$BASE/agentos-${VERSION#v}.tgz"
+curl -fsSLO "$BASE/curie-${VERSION#v}.tgz"
 sha256sum --check --ignore-missing checksums.txt
 ```
 
 Run the cosign step above first if you have not already: checking a file against
 an unverified manifest proves only that it downloaded intact.
 
-A release binary fetches these two assets itself when you run `agentos cluster
-up` or `agentos local up`, caching them under `~/.cache/agentos/`. That fetch
+A release binary fetches these two assets itself when you run `curie cluster
+up` or `curie local up`, caching them under `~/.cache/curie/`. That fetch
 does not verify them today: it is protected by HTTPS to GitHub, not by the
 signature. Verify them by hand as above if you need the stronger guarantee.
 
@@ -133,7 +133,7 @@ it:
   vulnerability scanner.
 - **Chart and compose** -- these are deployment manifests with no dependencies of
   their own, so their SBOMs inventory the packaged artifact itself and little
-  else. The dependency graph of what they deploy belongs to the `agentos-*`
+  else. The dependency graph of what they deploy belongs to the `curie-*`
   container images, and those do **not** carry SBOMs or provenance yet: that is
   issue #62, still open. Do not read a verified chart as a verified stack.
 
@@ -175,7 +175,7 @@ which is a reviewed edit rather than a side effect.
   an Apple developer account decision. Gatekeeper quarantines a browser-downloaded
   copy; the `curl` download above avoids this (curl does not set the quarantine
   flag), or clear it once with
-  `xattr -d com.apple.quarantine ./agentos-aarch64-apple-darwin` (or right-click
+  `xattr -d com.apple.quarantine ./curie-aarch64-apple-darwin` (or right-click
   the binary in Finder and choose Open). Verify it with cosign or
   `gh attestation verify` as above -- that is the real check regardless.
 - **Container images.** GHCR image signing, provenance, and SBOMs are issue #62.

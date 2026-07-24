@@ -5,7 +5,7 @@ Date: 2026-07-13
 Status: Accepted
 
 Refines how ADR-0007 (adopt-not-build) applies to the blob-storage seam. Issue
-[#282](https://github.com/curie-eng/agentos/issues/282), epic #83. Does **not**
+[#282](https://github.com/curie-eng/curie/issues/282), epic #83. Does **not**
 supersede ADR-0007 — it keeps 0007's core rule (no second backend ahead of
 demand) and changes only *where the line is drawn in code* for this one seam.
 

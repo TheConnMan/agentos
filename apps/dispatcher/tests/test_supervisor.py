@@ -2,7 +2,7 @@
 
 import threading
 
-from agentos_dispatcher.supervisor import BackoffPolicy, Supervisor
+from curie_dispatcher.supervisor import BackoffPolicy, Supervisor
 
 
 def test_backoff_is_exponential_and_capped() -> None:

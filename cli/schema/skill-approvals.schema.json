@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/skill-approvals/v1.json",
-  "title": "agentos skill approvals --json",
-  "description": "The agent-facing payload of `agentos skill approvals`: the bundle's declared gates, or the env assignment a set/clear WOULD need (the skill tier boots the runner from env, so there is nothing to mutate; ADR-0041).",
+  "$id": "https://schemas.curietech.ai/cli/skill-approvals/v1.json",
+  "title": "curie skill approvals --json",
+  "description": "The agent-facing payload of `curie skill approvals`: the bundle's declared gates, or the env assignment a set/clear WOULD need (the skill tier boots the runner from env, so there is nothing to mutate; ADR-0041).",
   "oneOf": [
     {
       "type": "object",

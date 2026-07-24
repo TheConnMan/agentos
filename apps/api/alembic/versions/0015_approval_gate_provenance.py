@@ -33,7 +33,7 @@ down_revision: str | None = "0014"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-SCHEMA = "agentos"
+SCHEMA = "curie"
 
 # Duplicated (not imported) from the worker's binding._PERMISSION_GATE_SUMMARY_PREFIX
 # and the runner's summarize_tool_call. Length 29; the backfill parses the tool

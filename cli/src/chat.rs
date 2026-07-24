@@ -16,7 +16,7 @@
 //! interim edit as the answer.
 //!
 //! The worker must run with `SLACK_API_BASE_URL` pointing at this stub's `/api/`
-//! base: the worker reads that env var (`agentos_worker.config`) and builds its
+//! base: the worker reads that env var (`curie_worker.config`) and builds its
 //! Slack sink's `AsyncWebClient(token=..., base_url=...)` against it, so its
 //! `chat.update` edits land at this stub instead of real Slack. No Slack token,
 //! channel, or real Slack HTTP on the CLI side.
@@ -40,7 +40,7 @@ use crate::queue::{
 
 pub const DEFAULT_STREAM: &str = queue::DEFAULT_STREAM;
 pub const DEFAULT_VALKEY_URL: &str = queue::DEFAULT_VALKEY_URL;
-pub const DEFAULT_USER: &str = "U-agentos-chat";
+pub const DEFAULT_USER: &str = "U-curie-chat";
 pub const DEFAULT_TIMEOUT_SECS: u64 = 180;
 pub const DEFAULT_LISTEN_HOST: &str = "localhost";
 pub const DEFAULT_LISTEN_PORT: u16 = 0;
@@ -88,10 +88,10 @@ fn capped(budget: Duration, deadline: Instant) -> Duration {
 }
 
 /// The Block Kit action id on the approval card's Approve button
-/// (`agentos_dispatcher.approval_actions.APPROVE_ACTION_ID`). Its presence in a
+/// (`curie_dispatcher.approval_actions.APPROVE_ACTION_ID`). Its presence in a
 /// captured Slack call body is the unambiguous signal that a turn parked
 /// awaiting approval and posted a card (#529).
-pub const APPROVE_ACTION_ID: &str = "agentos-approval-approve";
+pub const APPROVE_ACTION_ID: &str = "curie-approval-approve";
 
 /// One captured Slack Web API call at the stub.
 #[derive(Debug, Clone)]
@@ -282,7 +282,7 @@ pub enum Outcome {
 /// Signal 2 is load-bearing because the card does not always reach this stub:
 /// the kernel posts it over the per-turn endpoint only when the approval route's
 /// channel matches the requesting channel (`in_requesting_channel` /
-/// `card_endpoint`, apps/worker/src/agentos_worker/kernel.py). With a route bound
+/// `card_endpoint`, apps/worker/src/curie_worker/kernel.py). With a route bound
 /// to a different channel the card rides the worker's DEFAULT transport, while
 /// the placeholder notice always uses the per-turn endpoint -- so a route-bound
 /// approval would otherwise be reported as a successful reply whose text is the
@@ -353,7 +353,7 @@ pub async fn await_reply(
 /// Extract the approval UUID from the worker's placeholder notice.
 ///
 /// Grounding (verified 2026-07-21 against this worktree,
-/// `apps/worker/src/agentos_worker/kernel.py:827-834`): the kernel builds
+/// `apps/worker/src/curie_worker/kernel.py:827-834`): the kernel builds
 /// `notice = f"Awaiting approval ({created.id}): {summary}\n" + "The session is
 /// paused and will resume once an authorized member resolves this request."` and
 /// edits the placeholder to `f"{base}\n\n{notice}"` when a prior partial answer
@@ -434,7 +434,7 @@ pub fn parse_approval_id(placeholder_text: &str) -> Option<String> {
 /// Mechanism: resolving an approval does not open a bespoke channel. The
 /// platform API appends the resume turn onto the SAME runs stream this CLI
 /// enqueued onto, under the deterministic event id `approval-<id>-resolved`
-/// (`apps/api/src/agentos_api/resumequeue.py`), replaying the original turn's
+/// (`apps/api/src/curie_api/resumequeue.py`), replaying the original turn's
 /// placeholder and this stub's reply endpoint. So the resume is just another
 /// stream entry, and its completion is the ordinary ack-based signal:
 ///
@@ -542,12 +542,12 @@ pub async fn await_resume(
 }
 
 pub fn continue_hint_line(verb: &str) -> String {
-    format!("continue this conversation: agentos {verb} --continue \"...\"")
+    format!("continue this conversation: curie {verb} --continue \"...\"")
 }
 
 pub fn continue_hint_long_line(verb: &str, channel: &str, thread_ts: &str) -> String {
     format!(
-        "continue this conversation: agentos {verb} --channel '{channel}' --thread {thread_ts} \"...\""
+        "continue this conversation: curie {verb} --channel '{channel}' --thread {thread_ts} \"...\""
     )
 }
 
@@ -612,7 +612,7 @@ mod tests {
         let line = continue_hint_line("cluster message");
 
         assert!(line.contains("--continue"));
-        assert!(line.contains("agentos cluster message"));
+        assert!(line.contains("curie cluster message"));
         assert!(!line.contains("--channel"));
         assert!(!line.contains("--thread"));
     }
@@ -626,7 +626,7 @@ mod tests {
     }
 
     // --- parse_approval_id (#766 AC-2) --------------------------------------
-    // Grounding: apps/worker/src/agentos_worker/kernel.py:922 edits the
+    // Grounding: apps/worker/src/curie_worker/kernel.py:922 edits the
     // placeholder to `f"Awaiting approval ({created.id}): {summary}\n..."`, and
     // kernel.py:929 wraps it as `f"{base}\n\n{notice}"` when a prior partial
     // answer exists. Verified 2026-07-21 against this worktree's kernel.py.

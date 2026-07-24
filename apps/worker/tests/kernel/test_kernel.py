@@ -22,9 +22,9 @@ from aci_protocol import (
     SideEffectFlag,
     TextDelta,
 )
-from agentos_worker import kernel as kernel_module
-from agentos_worker.behaviorpacks import BehaviorPacks, NavPack
-from agentos_worker.runner_client import RunnerError
+from curie_worker import kernel as kernel_module
+from curie_worker.behaviorpacks import BehaviorPacks, NavPack
+from curie_worker.runner_client import RunnerError
 
 DONE = SessionStatus.DONE
 IDLE = SessionStatus.IDLE_AWAITING_INPUT
@@ -487,7 +487,7 @@ class _TokenBinding:
         return _FakeResolved(self._agent_id)
 
     def boot_env(self, _resolved: object, _thread_key: str) -> dict[str, str]:
-        return {"AGENTOS_RUNNER_TOKEN": self._token}
+        return {"CURIE_RUNNER_TOKEN": self._token}
 
     def packs_for(self, _resolved: object) -> BehaviorPacks:
         return BehaviorPacks()
@@ -868,7 +868,7 @@ def test_claim_latency_is_logged(make_harness, caplog) -> None:
     async def go() -> None:
         async with make_harness() as h:
             h.runner.default_script = [Final(text="hi", status=DONE)]
-            with caplog.at_level(logging.INFO, logger="agentos_worker.kernel"):
+            with caplog.at_level(logging.INFO, logger="curie_worker.kernel"):
                 await h.kernel.process_event(_qevent("hi", thread="tLatency"))
 
             matches = [

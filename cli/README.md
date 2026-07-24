@@ -1,7 +1,7 @@
 # cli
 
-The `agentos` CLI (Rust: clap + tokio + reqwest). It speaks
-only the frozen contracts (the generated `agentos-aci-protocol` crate over
+The `curie` CLI (Rust: clap + tokio + reqwest). It speaks
+only the frozen contracts (the generated `curie-aci-protocol` crate over
 HTTP/NDJSON, and the platform API's committed openapi.json) and orchestrates a
 local runner container via Docker, so a plugin runs on a dev laptop with zero
 Slack involved.
@@ -10,7 +10,7 @@ Slack involved.
 
 Every environment command takes a **target noun** in the middle: `skill`,
 `local`, or `cluster`. Pick the lightest one that answers your question.
-`agentos init` is the exception, a top-level verb that scaffolds a bundle on
+`curie init` is the exception, a top-level verb that scaffolds a bundle on
 disk and targets no environment.
 
 | Target | What runs | Slack | Kubernetes | Verbs | Reach for it to |
@@ -36,17 +36,17 @@ runner and ACI, so a `message` walks the same path a real Slack mention would.
 
 | Command | What it does |
 |---|---|
-| `agentos init <name>` | Scaffold a plugin bundle (Claude Code plugin shape: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`) plus an `evals/cases.json` seed, a root `AGENTS.md`, and an installable `.claude/skills/using-agentos/SKILL.md` harness primer. |
-| `agentos init --from-spec <path>` | Scaffold **non-interactively** from an agent-authored spec file (JSON). The bundle name comes from the spec, not a positional argument. A coding agent interviews the human, writes the spec, then this command lays down the same plugin-format shape deterministically -- zero prompts. See the spec shape below. |
-| `agentos init --adopt <dir>` | Adopt an existing non-plugin directory: scaffold the same plugin skeleton **into** it, alongside your code and never overwriting an existing file, with the bundle name derived from the directory unless a `<name>` is given. The on-ramp for a pre-plugin (`agent-ss-template`) bundle; the logic port is manual afterward -- see `docs/adopting-a-bundle.md`. |
-| `agentos` | Open the keyboard-driven terminal interface. Explicit forms: `agentos interactive`, `agentos ui`, `agentos tui`. |
-| `agentos secrets set <NAME>` | Save a local secret in AgentOS's mode-0600 credential file with hidden input. `--from-env <VAR>` reads from an existing environment variable for non-interactive use without putting the value in argv. |
-| `agentos secrets list` | List saved AgentOS secret names. Values are never printed. |
-| `agentos secrets unset <NAME>` | Remove a saved local secret. |
-| `agentos guide` | Print a self-contained primer (ADR-0021) for a coding agent driving the harness: the parity ladder, when/which decision logic, the landmines, and verify-first, to stdout. `--json` emits the same content as a structured variant (data on stdout). |
-| `agentos build` | Build the runner image locally: `docker build -f runner/Dockerfile -t agentos-runner .` from the repo root (found by walking up to `runner/Dockerfile`). `--tag` overrides the tag. Prints a clear error if Docker is not installed or if run outside a source checkout -- a release binary pulls the pinned runner image from GHCR automatically and never needs to build. |
-| `agentos list-agents` | List the plugin bundles under `agents/`, a personal, gitignored directory (sibling of `examples/`, source checkout only) for in-progress agent projects. Empty, not an error, when the directory doesn't exist. |
-| `agentos deploy-local <folder>` | Deploy `agents/<folder>` to the local platform by name -- shorthand for `agentos local deploy --plugin-dir agents/<folder>` (identical operation, same flags minus `--plugin-dir`). Local tier only; use `agentos cluster deploy --plugin-dir agents/<folder>` for the cluster tier. The interactive "How to deploy to Slack" workflow offers the same `agents/` bundles as a picker. |
+| `curie init <name>` | Scaffold a plugin bundle (Claude Code plugin shape: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `.mcp.json`) plus an `evals/cases.json` seed, a root `AGENTS.md`, and an installable `.claude/skills/using-curie/SKILL.md` harness primer. |
+| `curie init --from-spec <path>` | Scaffold **non-interactively** from an agent-authored spec file (JSON). The bundle name comes from the spec, not a positional argument. A coding agent interviews the human, writes the spec, then this command lays down the same plugin-format shape deterministically -- zero prompts. See the spec shape below. |
+| `curie init --adopt <dir>` | Adopt an existing non-plugin directory: scaffold the same plugin skeleton **into** it, alongside your code and never overwriting an existing file, with the bundle name derived from the directory unless a `<name>` is given. The on-ramp for a pre-plugin (`agent-ss-template`) bundle; the logic port is manual afterward -- see `docs/adopting-a-bundle.md`. |
+| `curie` | Open the keyboard-driven terminal interface. Explicit forms: `curie interactive`, `curie ui`, `curie tui`. |
+| `curie secrets set <NAME>` | Save a local secret in Curie's mode-0600 credential file with hidden input. `--from-env <VAR>` reads from an existing environment variable for non-interactive use without putting the value in argv. |
+| `curie secrets list` | List saved Curie secret names. Values are never printed. |
+| `curie secrets unset <NAME>` | Remove a saved local secret. |
+| `curie guide` | Print a self-contained primer (ADR-0021) for a coding agent driving the harness: the parity ladder, when/which decision logic, the landmines, and verify-first, to stdout. `--json` emits the same content as a structured variant (data on stdout). |
+| `curie build` | Build the runner image locally: `docker build -f runner/Dockerfile -t curie-runner .` from the repo root (found by walking up to `runner/Dockerfile`). `--tag` overrides the tag. Prints a clear error if Docker is not installed or if run outside a source checkout -- a release binary pulls the pinned runner image from GHCR automatically and never needs to build. |
+| `curie list-agents` | List the plugin bundles under `agents/`, a personal, gitignored directory (sibling of `examples/`, source checkout only) for in-progress agent projects. Empty, not an error, when the directory doesn't exist. |
+| `curie deploy-local <folder>` | Deploy `agents/<folder>` to the local platform by name -- shorthand for `curie local deploy --plugin-dir agents/<folder>` (identical operation, same flags minus `--plugin-dir`). Local tier only; use `curie cluster deploy --plugin-dir agents/<folder>` for the cluster tier. The interactive "How to deploy to Slack" workflow offers the same `agents/` bundles as a picker. |
 
 ### `init --from-spec` spec shape
 
@@ -60,7 +60,7 @@ manifest's `secrets`; `approvalPolicy` (optional) declares approval `gates`
 `mcp__plugin_<bundle>_<server>__<tool>` for a declared connector (a built-in like
 `Bash` needs no prefix) — so a spec can express a gated, authed agent without
 hand-editing `plugin.json`; `evals` reuses the frozen eval-case shape
-so the scaffolded `evals/cases.json` loads unchanged through `agentos skill eval`.
+so the scaffolded `evals/cases.json` loads unchanged through `curie skill eval`.
 An unknown TOP-LEVEL field is a hard error, so an authoring typo fails loud, but
 unknown keys INSIDE an eval case are ignored exactly as the platform's worker
 `EvalSuite` ignores them (pydantic `extra="ignore"`), which is intentional parity
@@ -98,13 +98,13 @@ with the platform grader, not an oversight.
 ```
 
 ```bash
-agentos init --from-spec agent-spec.json   # bundle name (deal-desk) comes from the spec
+curie init --from-spec agent-spec.json   # bundle name (deal-desk) comes from the spec
 ```
 
-## `agentos` / `agentos interactive`
+## `curie` / `curie interactive`
 
 The interactive terminal interface is a human-friendly command surface over the
-same `agentos ...` subcommands documented here. It opens a full-screen TUI with
+same `curie ...` subcommands documented here. It opens a full-screen TUI with
 target navigation, action selection, command previews, and guarded execution:
 when an action needs values (for example message text or a channel id), the TUI
 temporarily leaves the alternate screen, prompts for the values, runs the exact
@@ -114,10 +114,10 @@ other values, and the command preview shows `<local|cluster>` in the tier's
 position until that question is answered.
 
 ```bash
-agentos
-agentos interactive
-agentos ui
-agentos tui
+curie
+curie interactive
+curie ui
+curie tui
 ```
 
 Keyboard:
@@ -135,47 +135,47 @@ The first surface focuses on the common inner-loop and operations paths:
 `install`, and `dev contracts`.
 
 **Explore examples** opens a dialog for GitHub issues, Text stats engine, or
-Weather. After selection, AgentOS checks that example's credentials, starts its
+Weather. After selection, Curie checks that example's credentials, starts its
 bundle once, and opens a persistent conversation. Type a message, read the
 reply, and continue for as many turns as needed. Leaving chat stops the runner
-and returns to AgentOS.
+and returns to Curie.
 
-## `agentos secrets`
+## `curie secrets`
 
-Local secrets are stored in `~/.config/agentos/credentials.json` with mode 0600,
-not in the repo, shell history, command argv, `.env`, or AgentOS state files.
+Local secrets are stored in `~/.config/curie/credentials.json` with mode 0600,
+not in the repo, shell history, command argv, `.env`, or Curie state files.
 This follows the prompt-free private-config pattern used by developer CLIs.
-AgentOS keeps a separate non-secret index so secret names can be listed without
+Curie keeps a separate non-secret index so secret names can be listed without
 opening values. Existing Keychain credentials are copied into the private file
-on first use; AgentOS never writes to or deletes from Keychain during migration.
+on first use; Curie never writes to or deletes from Keychain during migration.
 
 ```bash
-agentos secrets set GITHUB_PERSONAL_ACCESS_TOKEN
-agentos secrets set ANTHROPIC_API_KEY
-agentos secrets list
-agentos secrets unset GITHUB_PERSONAL_ACCESS_TOKEN
+curie secrets set GITHUB_PERSONAL_ACCESS_TOKEN
+curie secrets set ANTHROPIC_API_KEY
+curie secrets list
+curie secrets unset GITHUB_PERSONAL_ACCESS_TOKEN
 ```
 
 For CI or other non-interactive setup, read from an existing environment
 variable instead of prompting:
 
 ```bash
-agentos secrets set GITHUB_PERSONAL_ACCESS_TOKEN --from-env GITHUB_PAT
+curie secrets set GITHUB_PERSONAL_ACCESS_TOKEN --from-env GITHUB_PAT
 ```
 
-`agentos skill up --secret <NAME>` first uses a real environment variable when
-one is already set. If it is missing, the CLI tries the AgentOS secret store and
+`curie skill up --secret <NAME>` first uses a real environment variable when
+one is already set. If it is missing, the CLI tries the Curie secret store and
 hydrates the process environment just long enough for Docker to forward `-e
 <NAME>` into the runner. The same lookup applies to saved model credentials
-(`AGENTOS_CREDENTIALS`, `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN`) for
+(`CURIE_CREDENTIALS`, `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN`) for
 live `skill up` runs.
 
-## `agentos install`
+## `curie install`
 
 Contributor bootstrap/update for a source checkout: install dependencies and
-build, but **start nothing**. Run it after cloning; rerun `./get-agentos.sh` later
+build, but **start nothing**. Run it after cloning; rerun `./get-curie.sh` later
 to refresh an existing checkout without reinstalling already-present artifacts.
-Then `agentos local up` brings the stack up. From the repo root (found by
+Then `curie local up` brings the stack up. From the repo root (found by
 walking up to `runner/Dockerfile`) it runs, in order and each idempotent,
 streaming output:
 
@@ -183,12 +183,12 @@ streaming output:
 2. `uv sync` at the repo root (needs `uv`).
 3. `pnpm install` in `apps/ui` (needs `pnpm`).
 4. `cargo build` in `cli` (needs `cargo`).
-5. Build the runner image via `agentos build` (needs `docker`).
+5. Build the runner image via `curie build` (needs `docker`).
 
-`agentos install --update` is the rerun path used by `./get-agentos.sh` (in its
+`curie install --update` is the rerun path used by `./get-curie.sh` (in its
 source-checkout mode) when an installed CLI already exists. It still refreshes
-dependencies and local builds, but skips rebuilding the `agentos-runner` image
-if that image is already present. `./get-agentos.sh` always rebuilds and
+dependencies and local builds, but skips rebuilding the `curie-runner` image
+if that image is already present. `./get-curie.sh` always rebuilds and
 reinstalls the CLI itself (`cargo install --path cli --force`) rather than
 guessing from file mtimes -- a branch switch changes the sources without
 reliably bumping mtimes, so a stale binary could otherwise survive; cargo's own
@@ -198,23 +198,23 @@ Each required tool is checked first; a missing one prints a pointer (e.g. `uv is
 not installed - https://docs.astral.sh/uv/`) and stops. Run outside a source
 checkout it errors clearly -- a release binary has nothing to install.
 
-## `agentos dev`
+## `curie dev`
 
 Thin wrappers over the repo's dev scripts, so contributors get one unified
-`agentos <command>` surface while the scripts stay the implementation. Each finds
+`curie <command>` surface while the scripts stay the implementation. Each finds
 the repo root, confirms the script exists, shells `bash <script>` from the root,
 streams its output, and propagates its exit code. Run outside a source checkout
 they error clearly -- a release binary has no dev scripts.
 
 | Command | What it does |
 |---|---|
-| `agentos dev contracts` | `bash scripts/check-contracts.sh` -- check the frozen contracts. |
-| `agentos dev chart-check` | `bash charts/agentos/ci/render-assertions.sh` -- render-assert the Helm chart. |
-| `agentos dev e2e` | `bash cli/scripts/e2e.sh` -- the scripted CLI end-to-end test. |
-| `agentos dev e2e-ladder` | `bash cli/scripts/e2e-ladder.sh` -- the cold-start parity ladder (skill, local, cluster rungs). |
-| `agentos dev field-parity` | `bash cli/scripts/check-field-parity.sh` -- assert CLI `api.rs` mirror structs cover their platform API model fields (#691), and CLI `commands.rs`/`spec.rs` mirror structs cover the frozen `packages/plugin-format` schema's fields (#701). |
-| `agentos dev emit-parity` | `bash cli/scripts/check-emit-parity.sh` -- assert a `CliOutput::to_json` that hand-projects a mirror struct into a `json!` literal covers that struct's fields, one hop downstream of `field-parity` (#699). |
-| `agentos dev wire-tolerance` | `bash scripts/check-wire-tolerance.sh` -- assert every direct `ClassName.model_validate*(...)` call on an `_AciModel` subclass threads `READER_CONTEXT` or is a declared exception (#625). |
+| `curie dev contracts` | `bash scripts/check-contracts.sh` -- check the frozen contracts. |
+| `curie dev chart-check` | `bash charts/curie/ci/render-assertions.sh` -- render-assert the Helm chart. |
+| `curie dev e2e` | `bash cli/scripts/e2e.sh` -- the scripted CLI end-to-end test. |
+| `curie dev e2e-ladder` | `bash cli/scripts/e2e-ladder.sh` -- the cold-start parity ladder (skill, local, cluster rungs). |
+| `curie dev field-parity` | `bash cli/scripts/check-field-parity.sh` -- assert CLI `api.rs` mirror structs cover their platform API model fields (#691), and CLI `commands.rs`/`spec.rs` mirror structs cover the frozen `packages/plugin-format` schema's fields (#701). |
+| `curie dev emit-parity` | `bash cli/scripts/check-emit-parity.sh` -- assert a `CliOutput::to_json` that hand-projects a mirror struct into a `json!` literal covers that struct's fields, one hop downstream of `field-parity` (#699). |
+| `curie dev wire-tolerance` | `bash scripts/check-wire-tolerance.sh` -- assert every direct `ClassName.model_validate*(...)` call on an `_AciModel` subclass threads `READER_CONTEXT` or is a declared exception (#625). |
 
 ## `skill` target: runner-only, fully offline
 
@@ -223,17 +223,17 @@ HTTP surface directly. No platform, no queue, no API, no Slack, no cluster.
 
 | Command | What it does |
 |---|---|
-| `agentos skill up` | Boot the local runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network` and `--otel-endpoint` join the compose stack for traces; `--model <id>` forwards `AGENTOS_MODEL` (omit for the SDK default). `--secret <NAME>` forwards bundle MCP secrets by name, using AgentOS private storage when the env var is not exported. `--env-file <PATH>` reads the model credential from a bundle `.env` as a last-resort fallback (precedence: shell env > stored secret > file; only `AGENTOS_CREDENTIALS`/`CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` are read), so a bundle boots live with no `source` step (#749). A leftover container of the same name fails the boot with the remedies rather than a raw docker conflict; `--replace` removes it and boots fresh. |
-| `agentos skill check` | Run an offline, credential free MCP load check and report declared servers, matches, and verdict. |
-| `agentos skill approvals` | View the bundle's declared `approvalPolicy` gates, read straight from `.claude-plugin/plugin.json` (or `plugin.json`); no docker, no network. `--gate <TOOL>` (repeatable) or `--clear` mutate nothing -- they print the `AGENTOS_APPROVAL_REQUIRED_TOOLS=...` assignment to export, then re-run your original `skill up` invocation with `--secret AGENTOS_APPROVAL_REQUIRED_TOOLS` added, since the runner only resolves that env once at container boot. |
-| `agentos skill versions` | Not available at this tier (exit 4): `skill up` runs the bundle bytes on disk, so no deployed version is assigned. Use `agentos local versions <agent>` or `agentos cluster versions <agent>`. |
-| `agentos skill memory` | Not available at this tier (exit 4): this tier configures no memory namespace. Use `agentos local memory <agent>` or `agentos cluster memory <agent>`. |
-| `agentos skill message "..."` | Send a synthetic Slack event: POST an ACI `event` frame to the local runner and stream the NDJSON reply (text deltas, tool notes, side effect flags, final). Abort a live turn with Ctrl-C. |
-| `agentos skill eval` | Run `evals/cases.json` through the runner as `eval_case` events; prints a per case result table plus a pass or fail rollup; nonzero exit on failure. |
-| `agentos skill status` | Show the local runner's session status. |
-| `agentos skill down` | Stop and remove the local runner container. With no `.agentos/runner.json` it falls back to container identity, so an orphaned runner is still clearable; `--name <NAME>` targets a container other than `agentos-runner-local`. |
+| `curie skill up` | Boot the local runner image in Docker with the ACI boot env (runner/README.md recipe), wait for health, print the boxed env summary. `--fake-model` runs offline; `--network` and `--otel-endpoint` join the compose stack for traces; `--model <id>` forwards `CURIE_MODEL` (omit for the SDK default). `--secret <NAME>` forwards bundle MCP secrets by name, using Curie private storage when the env var is not exported. `--env-file <PATH>` reads the model credential from a bundle `.env` as a last-resort fallback (precedence: shell env > stored secret > file; only `CURIE_CREDENTIALS`/`CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` are read), so a bundle boots live with no `source` step (#749). A leftover container of the same name fails the boot with the remedies rather than a raw docker conflict; `--replace` removes it and boots fresh. |
+| `curie skill check` | Run an offline, credential free MCP load check and report declared servers, matches, and verdict. |
+| `curie skill approvals` | View the bundle's declared `approvalPolicy` gates, read straight from `.claude-plugin/plugin.json` (or `plugin.json`); no docker, no network. `--gate <TOOL>` (repeatable) or `--clear` mutate nothing -- they print the `CURIE_APPROVAL_REQUIRED_TOOLS=...` assignment to export, then re-run your original `skill up` invocation with `--secret CURIE_APPROVAL_REQUIRED_TOOLS` added, since the runner only resolves that env once at container boot. |
+| `curie skill versions` | Not available at this tier (exit 4): `skill up` runs the bundle bytes on disk, so no deployed version is assigned. Use `curie local versions <agent>` or `curie cluster versions <agent>`. |
+| `curie skill memory` | Not available at this tier (exit 4): this tier configures no memory namespace. Use `curie local memory <agent>` or `curie cluster memory <agent>`. |
+| `curie skill message "..."` | Send a synthetic Slack event: POST an ACI `event` frame to the local runner and stream the NDJSON reply (text deltas, tool notes, side effect flags, final). Abort a live turn with Ctrl-C. |
+| `curie skill eval` | Run `evals/cases.json` through the runner as `eval_case` events; prints a per case result table plus a pass or fail rollup; nonzero exit on failure. |
+| `curie skill status` | Show the local runner's session status. |
+| `curie skill down` | Stop and remove the local runner container. With no `.curie/runner.json` it falls back to container identity, so an orphaned runner is still clearable; `--name <NAME>` targets a container other than `curie-runner-local`. |
 
-`skill up` records the container in the bundle's `.agentos/runner.json`
+`skill up` records the container in the bundle's `.curie/runner.json`
 (gitignored by the scaffold); `skill message` / `skill eval` / `skill status` /
 `skill down` run from the bundle directory and resolve the runner from it, or
 accept `--url`. Setting `skill up --model <id>` makes token usage attributable
@@ -243,22 +243,22 @@ in Langfuse traces.
 
 Wraps the `compose.dev.yaml` stack so a `message` walks the real
 queue -> worker -> sandboxed runner -> reply path on one machine, no Slack and
-no Kubernetes. `agentos local up` uses the `full` compose profile by default.
-`agentos local up --minimal` uses the smaller `core` profile. The compose API is
-published on host port `28000`. Add `agentos local up --slack` to also start
+no Kubernetes. `curie local up` uses the `full` compose profile by default.
+`curie local up --minimal` uses the smaller `core` profile. The compose API is
+published on host port `28000`. Add `curie local up --slack` to also start
 the optional Slack dispatcher.
 
 | Command | What it does |
 |---|---|
-| `agentos local up` | Bring the compose stack up (`docker compose --profile full up -d --wait` by default, `docker compose --profile core up -d --wait` with `--minimal`) and print URLs. Add `--slack` to append `--profile slack`. `--env-file <PATH>` reads the model credential from a bundle `.env` as a last-resort fallback (precedence: shell env > file; only `AGENTOS_CREDENTIALS`/`CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` are read, and the value never reaches argv or logs), so the stack boots live with no `set -a; source .env` step (#749). |
-| `agentos local down` | Stop the compose stack (`docker compose down`), keeping volumes. |
-| `agentos local status` | Show the compose stack's service status (`docker compose ps`). |
-| `agentos local observability` | Print the local platform's observability surfaces: AgentOS Console, Langfuse UI (traces / cost / evals), and the AgentOS API base. URLs are printed only; pass `--open` to also open the browsable ones (Console, Langfuse) in a browser. `--json` never opens a browser. |
-| `agentos local comms --slack` | Connect or disconnect a real Slack workspace for the compose stack. Resolves `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` with precedence `--app-token`/`--bot-token` flag > env var > a value persisted with `agentos secrets set` (so tokens saved once need no per-session re-export, #749), masks them in dry run output, starts or stops the dispatcher, and switches the worker between real Slack and the local stub. |
-| `agentos local message "..."` | Drive the local compose stack end to end with zero Slack. Enqueues straight to the compose Valkey and lets the containerized worker answer. |
-| `agentos local eval` | Run the bundle's `evals/cases.json` through the compose stack's enqueue -> worker -> sandbox -> reply path (one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. `--concurrency` defaults to 1 (sequential); values above 1 are refused for now (#709). |
-| `agentos local deploy` | Package the bundle as tar.gz and push it to the compose platform API (`--api-url`, default `http://localhost:28000`). Auth via `--api-key` or `AGENTOS_API_KEY`. |
-| `agentos local reset-thread <agent> --thread-key <key> --yes` | Force a stuck thread's sandbox to be released via the compose platform API (`POST /agents/{id}/threads/{thread_key}/reset`, #737). The worker's next maintenance tick releases the thread's claim and route, so its next message cold-creates a fresh sandbox; conversation history is not deleted. Interrupts a live turn on the thread first, so it refuses without `--yes`. |
+| `curie local up` | Bring the compose stack up (`docker compose --profile full up -d --wait` by default, `docker compose --profile core up -d --wait` with `--minimal`) and print URLs. Add `--slack` to append `--profile slack`. `--env-file <PATH>` reads the model credential from a bundle `.env` as a last-resort fallback (precedence: shell env > file; only `CURIE_CREDENTIALS`/`CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` are read, and the value never reaches argv or logs), so the stack boots live with no `set -a; source .env` step (#749). |
+| `curie local down` | Stop the compose stack (`docker compose down`), keeping volumes. |
+| `curie local status` | Show the compose stack's service status (`docker compose ps`). |
+| `curie local observability` | Print the local platform's observability surfaces: Curie Console, Langfuse UI (traces / cost / evals), and the Curie API base. URLs are printed only; pass `--open` to also open the browsable ones (Console, Langfuse) in a browser. `--json` never opens a browser. |
+| `curie local comms --slack` | Connect or disconnect a real Slack workspace for the compose stack. Resolves `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` with precedence `--app-token`/`--bot-token` flag > env var > a value persisted with `curie secrets set` (so tokens saved once need no per-session re-export, #749), masks them in dry run output, starts or stops the dispatcher, and switches the worker between real Slack and the local stub. |
+| `curie local message "..."` | Drive the local compose stack end to end with zero Slack. Enqueues straight to the compose Valkey and lets the containerized worker answer. |
+| `curie local eval` | Run the bundle's `evals/cases.json` through the compose stack's enqueue -> worker -> sandbox -> reply path (one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. `--concurrency` defaults to 1 (sequential); values above 1 are refused for now (#709). |
+| `curie local deploy` | Package the bundle as tar.gz and push it to the compose platform API (`--api-url`, default `http://localhost:28000`). Auth via `--api-key` or `CURIE_API_KEY`. |
+| `curie local reset-thread <agent> --thread-key <key> --yes` | Force a stuck thread's sandbox to be released via the compose platform API (`POST /agents/{id}/threads/{thread_key}/reset`, #737). The worker's next maintenance tick releases the thread's claim and route, so its next message cold-creates a fresh sandbox; conversation history is not deleted. Interrupts a live turn on the thread first, so it refuses without `--yes`. |
 
 ## `cluster` target: deployed Helm release
 
@@ -268,24 +268,24 @@ Wraps the umbrella Helm chart and the deployed release, the way `linkerd` or
 
 | Command | What it does |
 |---|---|
-| `agentos cluster up` | Install or upgrade the release (`helm upgrade --install`). Exposes the UI and Langfuse on node ports; `--no-expose` keeps them ClusterIP-only. Set `AGENTOS_CREDENTIALS` (deprecated alias `AGENTOS_MODEL_CREDENTIALS`) for a real model, or install sealed with canned replies. A shell `AGENTOS_MODEL` now defaults the sandbox runner model (`agentSandbox.runner.model`) for cross-tier parity with `local up`, unless an explicit `--set agentSandbox.runner.model=` is passed; a shell `AGENTOS_MODEL` that disagrees with such an explicit `--set` fails loud. |
-| `agentos cluster down` | Uninstall the release and sweep its runtime namespaces (`helm uninstall` + `kubectl delete namespace`); prompts unless `--yes`. |
-| `agentos cluster status` | Report release health, pod readiness, and access URLs (read-only). |
-| `agentos cluster observability` | Report the release's observability surfaces (AgentOS Console, Langfuse UI, AgentOS API base), using the same NodePort discovery as `cluster status`. Degrades a missing, ClusterIP, or unresolvable surface to a note instead of failing. URLs are printed only; pass `--open` to also open the browsable ones (Console, Langfuse) in a browser. `--json` never opens a browser. `--dry-run` prints the read-only discovery commands. |
-| `agentos cluster comms --slack` | Connect or disconnect a real Slack workspace with a thin `helm upgrade --reuse-values`; env-backed tokens are masked in dry-run output. |
-| `agentos cluster message "..."` | Drive the deployed release end to end with zero Slack: self plumbs kubectl port forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply. Auto-discovers the release-generated API key and Valkey password from `<release>-secrets` when `--api-key` / `--valkey-password` (or their env vars) are omitted, so a default strong-secrets install needs no hand-exported credentials (#786). |
-| `agentos cluster eval` | Run the bundle's `evals/cases.json` through the deployed release (self-plumbed port-forwards + per-turn reply stub, one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. `--concurrency` defaults to 1 (sequential); values above 1 are refused for now (#709). Auto-discovers the release-generated API key and Valkey password from `<release>-secrets` when `--api-key` / `--valkey-password` (or their env vars) are omitted, so a default strong-secrets install needs no hand-exported credentials (#790). |
-| `agentos cluster deploy` | Package the bundle as tar.gz and push it to the platform API. When `--api-url` is omitted, self-plumbs a `kubectl port-forward` (loopback tunnel) to the release API service and auto-discovers the release-generated key from `<release>-secrets`, so the strong key never crosses the cleartext UI proxy (ADR-0057). Pass `--api-url` / `AGENTOS_API_URL` to direct-dial a URL instead (no tunnel); an explicit `--api-key` / `AGENTOS_API_KEY` still wins over discovery. |
-| `agentos cluster kill <agent> --yes` | Kill an agent (stop its runs) via the platform API (`POST /agents/{id}/kill`). Destructive: refuses without `--yes`. |
-| `agentos cluster resume <agent>` | Resume a killed agent via the platform API (`POST /agents/{id}/resume`). |
-| `agentos cluster budget <agent> --limit <n>` | Set the agent's daily spend cap in USD via the platform API (`PUT /agents/{id}/budget`, `BudgetConfig.max_usd_per_day`); the per-run token cap is left at the platform default. |
-| `agentos cluster reset-thread <agent> --thread-key <key> --yes` | Force a stuck thread's sandbox to be released via the platform API (`POST /agents/{id}/threads/{thread_key}/reset`, #737). The worker's next maintenance tick releases the thread's claim and route, so its next message cold-creates a fresh sandbox; conversation history is not deleted. Interrupts a live turn on the thread first, so it refuses without `--yes`. |
-| `agentos cluster delete <agent> --yes` | Delete an agent via the platform API (`DELETE /agents/{id}`). Destructive and irreversible: refuses without `--yes`. |
+| `curie cluster up` | Install or upgrade the release (`helm upgrade --install`). Exposes the UI and Langfuse on node ports; `--no-expose` keeps them ClusterIP-only. Set `CURIE_CREDENTIALS` (deprecated alias `CURIE_MODEL_CREDENTIALS`) for a real model, or install sealed with canned replies. A shell `CURIE_MODEL` now defaults the sandbox runner model (`agentSandbox.runner.model`) for cross-tier parity with `local up`, unless an explicit `--set agentSandbox.runner.model=` is passed; a shell `CURIE_MODEL` that disagrees with such an explicit `--set` fails loud. |
+| `curie cluster down` | Uninstall the release and sweep its runtime namespaces (`helm uninstall` + `kubectl delete namespace`); prompts unless `--yes`. |
+| `curie cluster status` | Report release health, pod readiness, and access URLs (read-only). |
+| `curie cluster observability` | Report the release's observability surfaces (Curie Console, Langfuse UI, Curie API base), using the same NodePort discovery as `cluster status`. Degrades a missing, ClusterIP, or unresolvable surface to a note instead of failing. URLs are printed only; pass `--open` to also open the browsable ones (Console, Langfuse) in a browser. `--json` never opens a browser. `--dry-run` prints the read-only discovery commands. |
+| `curie cluster comms --slack` | Connect or disconnect a real Slack workspace with a thin `helm upgrade --reuse-values`; env-backed tokens are masked in dry-run output. |
+| `curie cluster message "..."` | Drive the deployed release end to end with zero Slack: self plumbs kubectl port forwards, points the deployed worker at a local Slack stub (`helm upgrade --reuse-values`), enqueues, and prints the reply. Auto-discovers the release-generated API key and Valkey password from `<release>-secrets` when `--api-key` / `--valkey-password` (or their env vars) are omitted, so a default strong-secrets install needs no hand-exported credentials (#786). |
+| `curie cluster eval` | Run the bundle's `evals/cases.json` through the deployed release (self-plumbed port-forwards + per-turn reply stub, one synthetic turn per case) and grade each captured reply with the SAME grader `skill eval` uses. Prints the identical per-case table + rollup; nonzero exit on failure. `--cases` overrides the file; `--dry-run` prints the plan. `--concurrency` defaults to 1 (sequential); values above 1 are refused for now (#709). Auto-discovers the release-generated API key and Valkey password from `<release>-secrets` when `--api-key` / `--valkey-password` (or their env vars) are omitted, so a default strong-secrets install needs no hand-exported credentials (#790). |
+| `curie cluster deploy` | Package the bundle as tar.gz and push it to the platform API. When `--api-url` is omitted, self-plumbs a `kubectl port-forward` (loopback tunnel) to the release API service and auto-discovers the release-generated key from `<release>-secrets`, so the strong key never crosses the cleartext UI proxy (ADR-0057). Pass `--api-url` / `CURIE_API_URL` to direct-dial a URL instead (no tunnel); an explicit `--api-key` / `CURIE_API_KEY` still wins over discovery. |
+| `curie cluster kill <agent> --yes` | Kill an agent (stop its runs) via the platform API (`POST /agents/{id}/kill`). Destructive: refuses without `--yes`. |
+| `curie cluster resume <agent>` | Resume a killed agent via the platform API (`POST /agents/{id}/resume`). |
+| `curie cluster budget <agent> --limit <n>` | Set the agent's daily spend cap in USD via the platform API (`PUT /agents/{id}/budget`, `BudgetConfig.max_usd_per_day`); the per-run token cap is left at the platform default. |
+| `curie cluster reset-thread <agent> --thread-key <key> --yes` | Force a stuck thread's sandbox to be released via the platform API (`POST /agents/{id}/threads/{thread_key}/reset`, #737). The worker's next maintenance tick releases the thread's claim and route, so its next message cold-creates a fresh sandbox; conversation history is not deleted. Interrupts a live turn on the thread first, so it refuses without `--yes`. |
+| `curie cluster delete <agent> --yes` | Delete an agent via the platform API (`DELETE /agents/{id}`). Destructive and irreversible: refuses without `--yes`. |
 
 The five lifecycle verbs (`kill`, `resume`, `budget`, `reset-thread`, `delete`)
 act on a deployed release's agents through the same platform API, defaulting
 `--api-url` to `http://localhost:8000` (auth via `--api-key` or
-`AGENTOS_API_KEY`). Unlike `cluster deploy`, which self-plumbs a port-forward
+`CURIE_API_KEY`). Unlike `cluster deploy`, which self-plumbs a port-forward
 and auto-discovers the release key (ADR-0057), the lifecycle verbs do neither
 -- pass `--api-url` or port-forward the API yourself. They resolve `<agent>`
 (a name or id) to its API id with the same lookup `deploy` uses. Each takes
@@ -294,14 +294,14 @@ and auto-discovers the release key (ADR-0057), the lifecycle verbs do neither
 
 ### Bundle packing exclusions
 
-`local deploy` and `cluster deploy` never pack `.agentosignore`, `.agentos`,
+`local deploy` and `cluster deploy` never pack `.curieignore`, `.curie`,
 `.git`, `.venv`, `venv`, `node_modules`, `__pycache__`, `.mypy_cache`, or
-`.pytest_cache`, matched by name at any depth. An optional `.agentosignore`
+`.pytest_cache`, matched by name at any depth. An optional `.curieignore`
 at the bundle root adds more patterns, one per line (`#` comments and blank
 lines skipped, surrounding whitespace and a trailing `/` stripped):
 
 ```
-# .agentosignore
+# .curieignore
 scratch
 notebooks/drafts
 ```
@@ -315,22 +315,22 @@ link to upload host files from outside the bundle root.
 
 ### Artifact resolution
 
-Release builds resolve default artifacts from the binary version: `agentos local
+Release builds resolve default artifacts from the binary version: `curie local
 up` fetches the self contained `compose.release.yaml` release asset, so it
-works with no checkout, `agentos cluster up` uses the pinned chart release
-asset, and runner sessions (`agentos skill up`) use the pinned GHCR runner
+works with no checkout, `curie cluster up` uses the pinned chart release
+asset, and runner sessions (`curie skill up`) use the pinned GHCR runner
 image. Fetched artifacts cache under
-`${XDG_CACHE_HOME:-$HOME/.cache}/agentos/<version>/`, so repeated
-`agentos cluster up` and `agentos local up` reuse the cache.
+`${XDG_CACHE_HOME:-$HOME/.cache}/curie/<version>/`, so repeated
+`curie cluster up` and `curie local up` reuse the cache.
 
-Dev builds use the local `compose.dev.yaml`, `charts/agentos`, and
-`agentos-runner` when present. A dev binary run with no local artifact errors,
+Dev builds use the local `compose.dev.yaml`, `charts/curie`, and
+`curie-runner` when present. A dev binary run with no local artifact errors,
 telling you to pass `-f <compose>`, `--chart <path>`, or `--image <ref>` (or use
 a released binary); those same flags override the defaults. `--dry-run` prints
 the resolved argv without fetching.
 
-`agentos cluster message` is not yet wired through this resolver: it still defaults
-`--chart` to the repo-relative `charts/agentos`, so a no-checkout binary must
+`curie cluster message` is not yet wired through this resolver: it still defaults
+`--chart` to the repo-relative `charts/curie`, so a no-checkout binary must
 pass `--chart <path-or-tgz>` explicitly for now.
 
 ## Output
@@ -349,9 +349,9 @@ goes to **stderr**. So the payload pipes and redirects cleanly while progress
 still shows on the terminal:
 
 ```bash
-agentos cluster message "..." | jq         # clean JSON on stdout, progress on stderr
-agentos local message "..." > reply.txt    # reply captured, progress on the terminal
-agentos skill eval > results.txt           # results captured, progress on the terminal
+curie cluster message "..." | jq         # clean JSON on stdout, progress on stderr
+curie local message "..." > reply.txt    # reply captured, progress on the terminal
+curie skill eval > results.txt           # results captured, progress on the terminal
 ```
 
 On an interactive terminal, progress renders as a spinner-to-checkmark checklist
@@ -375,7 +375,7 @@ after Ns`, never a hang. Compatibility is handled automatically:
   `✗ fail`, `⚠ warn`), and glyphs fall back to ASCII (`v`/`x`/`!`, `- \ | /`
   spinner) in non-UTF-8 locales.
 
-## `agentos cluster message`: drive the deployed cluster with zero Slack
+## `curie cluster message`: drive the deployed cluster with zero Slack
 
 Before connecting a real workspace, `cluster message` is the zero-Slack path.
 When you are ready to wire Slack onto a deployed release, use:
@@ -383,13 +383,13 @@ When you are ready to wire Slack onto a deployed release, use:
 ```bash
 SLACK_APP_TOKEN=xapp-... \
 SLACK_BOT_TOKEN=xoxb-... \
-agentos cluster comms --slack
+curie cluster comms --slack
 
-agentos cluster comms --slack --disconnect
+curie cluster comms --slack --disconnect
 
 SLACK_APP_TOKEN=xapp-... \
 SLACK_BOT_TOKEN=xoxb-... \
-agentos cluster comms --slack --dry-run
+curie cluster comms --slack --dry-run
 ```
 
 `cluster message` targets a **deployed** Helm release and wires everything
@@ -399,8 +399,8 @@ sandbox -> the real skill -> the reply) without any Slack access, tokens, or
 workspace.
 
 ```bash
-agentos cluster message "summarize the latest deploy"
-agentos cluster message --channel CSIM123 "another question"
+curie cluster message "summarize the latest deploy"
+curie cluster message --channel CSIM123 "another question"
 ```
 
 What it does, in order:
@@ -439,10 +439,10 @@ What it does, in order:
 description without executing anything.
 
 Use `--continue` to reuse the last successful `cluster message` context from
-`.agentos/last-turn.json` in the current working directory, so only the new text
+`.curie/last-turn.json` in the current working directory, so only the new text
 is required. Explicit flags override the saved channel, thread, and transport
 settings, the verb must match, and the API key is re-read from
-`$AGENTOS_API_KEY` because the value is never stored. Note that `--continue`
+`$CURIE_API_KEY` because the value is never stored. Note that `--continue`
 does not replay `--stream`, `--listen-port`, `--valkey-local-port`,
 `--api-local-port`, or `--user`, so pass any of those again explicitly if the
 original turn used a non-default value.
@@ -456,8 +456,8 @@ same value you gave `cluster deploy --slack-channel` and the worker routes the
 turn to that agent.
 
 ```bash
-agentos cluster deploy --slack-channel CSIM123 ...
-agentos cluster message --channel CSIM123 "first question"
+curie cluster deploy --slack-channel CSIM123 ...
+curie cluster message --channel CSIM123 "first question"
 ```
 
 Each turn mints a fresh thread ts by default. On completion `cluster message`
@@ -466,25 +466,25 @@ copy paste it, or pass `--thread <ts>` yourself, to send the next turn into the
 same thread:
 
 ```bash
-agentos cluster message --channel CSIM123 --thread 1720000000.000100 "follow up question"
+curie cluster message --channel CSIM123 --thread 1720000000.000100 "follow up question"
 ```
 
-## `agentos local message`: the same roundtrip against the compose stack
+## `curie local message`: the same roundtrip against the compose stack
 
-`local message` drives the local compose stack (`agentos local up`) instead of a
+`local message` drives the local compose stack (`curie local up`) instead of a
 Kubernetes release, so the whole loop is one machine with no cluster:
 
 ```bash
-agentos local up
-agentos local deploy --plugin-dir <dir> --slack-channel C0123ABCD --api-url http://localhost:28000
-agentos local message "what changed in the last deploy?"
+curie local up
+curie local deploy --plugin-dir <dir> --slack-channel C0123ABCD --api-url http://localhost:28000
+curie local message "what changed in the last deploy?"
 ```
 
 Local mode keeps only the shared engine (stub + `QueuedSlackEvent` enqueue +
 ack-based completion) and drops every cluster-specific step: no kubectl, no
 `helm upgrade` wiring, no port-forwards, no dispatcher guard. It enqueues
 straight to the compose Valkey (`localhost:26379`) and the containerized
-`agentos-worker` service (already pointed at the stub via a fixed
+`curie-worker` service (already pointed at the stub via a fixed
 `SLACK_API_BASE_URL=http://localhost:8155/api/`) answers by claiming a runner
 container on the host Docker daemon. Channel comes from `--channel` or, when
 omitted, the sole deployed agent looked up on the compose API (`--api-url`,
@@ -495,19 +495,19 @@ suffix). `local message` composes with `--channel`, `--thread`, and
 with a clear error. The compose worker runs the fake model by default (a canned
 reply, no credentials); export a credential in your shell and `local up` or
 `local comms` goes live automatically for a real model. Instead of exporting it
-every session, point `agentos local up --env-file .env` at the bundle's own
+every session, point `curie local up --env-file .env` at the bundle's own
 dotfile: the model credential is read from it as a last-resort fallback
 (precedence: shell env > file), so the stack boots live with no
-`set -a; source .env` step. Only `AGENTOS_CREDENTIALS`, `CLAUDE_CODE_OAUTH_TOKEN`,
+`set -a; source .env` step. Only `CURIE_CREDENTIALS`, `CLAUDE_CODE_OAUTH_TOKEN`,
 and `ANTHROPIC_API_KEY` are read; every other key in the file is ignored, and the
-value never reaches argv or logs. Set `AGENTOS_FAKE_MODEL=1` to force the fake
+value never reaches argv or logs. Set `CURIE_FAKE_MODEL=1` to force the fake
 model regardless of a credential being present.
 
-Use `agentos local comms --slack` when you want the same compose stack to talk
+Use `curie local comms --slack` when you want the same compose stack to talk
 to a real Slack workspace. Connect resolves `SLACK_APP_TOKEN` and
 `SLACK_BOT_TOKEN` with precedence `--app-token`/`--bot-token` flag > env var > a
-value persisted with `agentos secrets set SLACK_APP_TOKEN` /
-`agentos secrets set SLACK_BOT_TOKEN` -- so tokens saved once in AgentOS private
+value persisted with `curie secrets set SLACK_APP_TOKEN` /
+`curie secrets set SLACK_BOT_TOKEN` -- so tokens saved once in Curie private
 storage need no per-session re-export -- masks them in printed commands, starts
 the dispatcher, and points the worker at real Slack, resolving the model the same
 way as `local up` (live when a credential is present, fake otherwise).
@@ -515,10 +515,10 @@ way as `local up` (live when a credential is present, fake otherwise).
 prints the compose command only.
 
 Use `--continue` to reuse the last successful `local message` context from
-`.agentos/last-turn.json` in the current working directory, so only the new text
+`.curie/last-turn.json` in the current working directory, so only the new text
 is required. Explicit flags override the saved channel, thread, and transport
 settings, the verb must match, and the API key is re-read from
-`$AGENTOS_API_KEY` because the value is never stored. Note that `--continue`
+`$CURIE_API_KEY` because the value is never stored. Note that `--continue`
 does not replay `--stream`, `--listen-port`, `--valkey-local-port`,
 `--api-local-port`, or `--user`, so pass any of those again explicitly if the
 original turn used a non-default value.
@@ -535,7 +535,7 @@ lifecycle result verbs (`kill`, `resume`, `budget`, `reset-thread`, `delete`),
 and every verb's
 `--dry-run` plan (uniform shape `{"dry_run": true, "plan": [<lines>]}`) all
 route through one centralized emitter. The `message` verbs keep their own,
-more specific shapes: `agentos local message` and `agentos cluster message`
+more specific shapes: `curie local message` and `curie cluster message`
 emit one structured line per terminal state on stdout -- a completed turn
 emits `{"reply": ..., "thread": ..., "finalized": ...}` (the model's reply,
 which is null on a no-edit completion, plus the thread the turn ran under); a
@@ -545,7 +545,7 @@ descriptor `{"dry_run": true, "target": "local"|"cluster", "stream": ...,
 "channel": ..., "reply_endpoint": ...}` (`channel` is null when it would be
 resolved from the sole deployed agent). The three shapes are the `oneOf` in
 `cli/schema/message.schema.json`. Two verbs lag this contract on their
-real-path success output: `agentos skill message`, and the operator verbs
+real-path success output: `curie skill message`, and the operator verbs
 (`up`, `down`, `status`, `comms`) plus `deploy`, still print human text rather
 than JSON on success (tracked in #485). All human and log text (progress,
 notes, warnings) goes to **stderr**, so a plain `... --json | jq` yields clean
@@ -559,8 +559,8 @@ committed JSON Schema under `cli/schema/` with an explicit version identity (the
 `vN` segment of its `$id`); `cli/schema/index.json` is the inventory of every
 result family, the schema it maps to, and its version. The schemas are embedded
 in the released binary, so the discovery path works with no source checkout:
-`agentos schema-index` prints the inventory index, and `agentos schema-index
-<name>` (e.g. `agentos schema-index kill`) prints one schema. A contract test
+`curie schema-index` prints the inventory index, and `curie schema-index
+<name>` (e.g. `curie schema-index kill`) prints one schema. A contract test
 (`cli/tests/schema_inventory.rs`) fails CI if a new result family lands without a
 schema, and `cli/tests/json_contract.rs` validates every result's real output
 against its schema. The compatibility policy — additive changes stay at the same
@@ -576,7 +576,7 @@ parsing output:
 | 1    | failure   | A genuine runtime failure (well-formed request, operation did not succeed). Do not retry blindly. |
 | 2    | usage     | A deterministic input error (missing `--yes`, a malformed flag/value, no bundle). Retrying the same argv fails identically -- fix the input. |
 | 3    | transient | A retryable condition (the endpoint was unreachable or timed out). The same argv may succeed once the dependency is up. |
-| 4    | unsupported | The verb was understood, but the concept it inspects does not exist at this tier by construction (`agentos skill versions`, `agentos skill memory`). No input and no retry changes that -- the same argv never succeeds here; the `fix` hint names the tier that does answer it. |
+| 4    | unsupported | The verb was understood, but the concept it inspects does not exist at this tier by construction (`curie skill versions`, `curie skill memory`). No input and no retry changes that -- the same argv never succeeds here; the `fix` hint names the tier that does answer it. |
 
 **Non-interactive by default.** Every mutating command has a non-interactive
 path (`--yes` on `cluster down`/`kill`/`delete`/`reset-thread`, `local
@@ -585,9 +585,9 @@ prompt that would otherwise read stdin refuses
 with a usage error (exit 2) when the session is not a terminal, rather than
 hanging.
 
-(`agentos local status` and `agentos cluster status` proxy raw
+(`curie local status` and `curie cluster status` proxy raw
 `docker compose`/`helm`/`kubectl` output and do not yet support `--json`; use
-`agentos skill status` for a machine-readable runner status today.)
+`curie skill status` for a machine-readable runner status today.)
 
 ## Verify
 
@@ -601,38 +601,38 @@ The scripted E2E (real runner container, fake model by default, offline):
 bash cli/scripts/e2e.sh
 ```
 
-Requires an `agentos-runner` image (`docker build -f runner/Dockerfile -t
-agentos-runner .` from the repo root) and a cargo toolchain, unless
-`AGENTOS_BIN` points at a prebuilt binary (skips the `cargo build --release`).
-`AGENTOS_E2E_LIVE=1` drops `--fake-model` and runs the skill rung against a
+Requires a `curie-runner` image (`docker build -f runner/Dockerfile -t
+curie-runner .` from the repo root) and a cargo toolchain, unless
+`CURIE_BIN` points at a prebuilt binary (skips the `cargo build --release`).
+`CURIE_E2E_LIVE=1` drops `--fake-model` and runs the skill rung against a
 real model, failing fast if no model credential (`ANTHROPIC_API_KEY`,
-`CLAUDE_CODE_OAUTH_TOKEN`, or `AGENTOS_CREDENTIALS`) is present.
+`CLAUDE_CODE_OAUTH_TOKEN`, or `CURIE_CREDENTIALS`) is present.
 
-The cold-start parity ladder (`agentos dev e2e-ladder`, `cli/scripts/e2e-ladder.sh`)
+The cold-start parity ladder (`curie dev e2e-ladder`, `cli/scripts/e2e-ladder.sh`)
 runs the same skill-tier script as rung 1, then adds a local rung (`local up
 --minimal` -> `local deploy` -> `local message` with the reply asserted ->
 `local down`, against `compose.dev.yaml`) and a cluster rung (`cluster deploy`
 then `cluster message`, a real round trip with no manual port-forward) against
 a pre-installed release. A `local-release` rung repeats the local rung's exact
 round trip against the generated `compose.release.yaml` instead -- the
-artifact a release binary's `agentos local up` actually runs -- so the CI
+artifact a release binary's `curie local up` actually runs -- so the CI
 config-only check on that file (`compose/generate_release_compose.py` +
 `docker compose config`) is not the only coverage it gets. It needs the
-release-pinned `ghcr.io/curie-eng/agentos-api` and `-worker-local` images
+release-pinned `ghcr.io/curie-eng/curie-api` and `-worker-local` images
 already built and tagged locally (it preflights and fails with a fix hint
 otherwise). Two env knobs configure it:
 
-- `AGENTOS_E2E_TIERS` -- which rungs to run. Defaults to `skill,local`
+- `CURIE_E2E_TIERS` -- which rungs to run. Defaults to `skill,local`
   (credential-free, CI-safe); `all` runs `skill,local,cluster`. A tier named
   explicitly is required, and its absence fails the run; a tier not named is
   skipped. `local-release` is a fourth tier, named explicitly (e.g.
   `skill,local,local-release`) -- it is not folded into `all` since it needs
   the extra images built first.
-- `AGENTOS_E2E_LIVE` -- unset or `0` runs the fake model (credential-free, the
+- `CURIE_E2E_LIVE` -- unset or `0` runs the fake model (credential-free, the
   default); `1` runs the live-credential variant for pre-release manual passes
   and fails fast if no model credential is present. It governs every named
   rung, including the skill rung: `e2e.sh` reads the same env var itself.
-- `AGENTOS_E2E_LISTEN_HOST` -- cluster rung only. Forwarded verbatim to `cluster
+- `CURIE_E2E_LISTEN_HOST` -- cluster rung only. Forwarded verbatim to `cluster
   message --listen-host` (the host the in-cluster worker posts its reply back
   to). Leave it unset for a cluster whose kubeconfig points at a routable API
   server: `cluster message` then auto-detects the local IP the kernel would use
@@ -644,5 +644,5 @@ otherwise). Two env knobs configure it:
 The one-command pre-release gate:
 
 ```bash
-AGENTOS_E2E_TIERS=all agentos dev e2e-ladder
+CURIE_E2E_TIERS=all curie dev e2e-ladder
 ```

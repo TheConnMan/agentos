@@ -3,7 +3,7 @@
 These run with no cluster and no dev stack: they exercise only the pure
 functions in ``harness.py`` (``thread_hash``, ``unique_marker``, ``final_frame``,
 ``collected_text``, ``detect_cross_talk``). They are deliberately not gated by
-``AGENTOS_SOAK`` so the harness logic stays covered in default CI paths when the
+``CURIE_SOAK`` so the harness logic stays covered in default CI paths when the
 suite is run by explicit path.
 """
 

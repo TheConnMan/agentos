@@ -10,9 +10,9 @@ order: 18
 
 # INTERFACE: CLI output (agent-facing `--json`)
 
-> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
+> Part of the Curie swappable-seam catalog — see the [seam index](../../interfaces.md).
 
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 9 outputs behind one trait &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 <!-- END GENERATED: header -->
 
@@ -106,8 +106,8 @@ Nine, all in the CLI crate:
 
 ## Cross-links
 
-- **Issue:** [#456](https://github.com/curie-eng/agentos/issues/456) — the `--json` contract broke per-command; `Ui::emit` + `CliOutput` + `DryRunPlan` are its fix
-- **Issue:** [#460](https://github.com/curie-eng/agentos/issues/460) — the observability twin, whose local/cluster tiers share one `CliOutput`
-- **Issue:** [#841](https://github.com/curie-eng/agentos/issues/841) — added the committed `cli/schema/` JSON Schemas, the `schema_inventory` build gate, and the `json_contract` output validation this seam now relies on
+- **Issue:** [#456](https://github.com/curie-eng/curie/issues/456) — the `--json` contract broke per-command; `Ui::emit` + `CliOutput` + `DryRunPlan` are its fix
+- **Issue:** [#460](https://github.com/curie-eng/curie/issues/460) — the observability twin, whose local/cluster tiers share one `CliOutput`
+- **Issue:** [#841](https://github.com/curie-eng/curie/issues/841) — added the committed `cli/schema/` JSON Schemas, the `schema_inventory` build gate, and the `json_contract` output validation this seam now relies on
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — CLI output is not one of the six swap-readiness Jobs; not separately graded
-- **ADR(s):** [ADR-0021](../../adr/0021-agentos-is-a-harness-for-coding-agents.md) — AgentOS is a harness for coding agents: the CLI's primary user is Claude Code (this seam is decision 1's enforcement); [ADR-0038](../../adr/0038-observability-cli-helper-for-the-agent-dev-loop.md) — the observability CLI is a thin client over the API proxy, not a second backend
+- **ADR(s):** [ADR-0021](../../adr/0021-curie-is-a-harness-for-coding-agents.md) — Curie is a harness for coding agents: the CLI's primary user is Claude Code (this seam is decision 1's enforcement); [ADR-0038](../../adr/0038-observability-cli-helper-for-the-agent-dev-loop.md) — the observability CLI is a thin client over the API proxy, not a second backend

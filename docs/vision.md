@@ -1,12 +1,12 @@
 # Vision
 
-This is the north star for AgentOS: what the project is, who it is for, and what
+This is the north star for Curie: what the project is, who it is for, and what
 it could become. It is deliberately not a feature list or a roadmap (those live
-in [GitHub issues](https://github.com/curie-eng/agentos/issues)). When we weigh
+in [GitHub issues](https://github.com/curie-eng/curie/issues)). When we weigh
 a new feature, this is the document we hold it against. If a change does not
 serve the vision below, it needs a very good reason to exist.
 
-## What AgentOS is
+## What Curie is
 
 The open source platform for building, running, and operating production AI
 agents. A developer authors an agent locally, tests it in a loop identical to
@@ -16,7 +16,7 @@ and get observability and evals out of the box. One command brings the whole
 thing up, locally or on any cluster.
 
 If Supabase is the box that tells a developer they need auth, storage, and a
-realtime database before they know they need them, AgentOS is the box that tells
+realtime database before they know they need them, Curie is the box that tells
 them they need evals, traces, and CI/CD for their agent before it breaks
 silently in production.
 
@@ -30,7 +30,7 @@ with no one watching. The industry data says the same thing (most GenAI pilots
 show no measurable impact; a large share of agentic projects get canceled), and
 the diagnosis is missing engineering discipline, not missing model capability.
 
-AgentOS ships that discipline as the default path, not an advanced option.
+Curie ships that discipline as the default path, not an advanced option.
 
 ## Who it is for
 
@@ -39,22 +39,22 @@ Developers building production agents. Not business users, not operators.
 Cost reduction is the boss's pain. The local dev loop, evals, and CI/CD are the
 developer's pain, and the developer is who adopts open source. Most developers
 think building an agent means writing a `skill.md`; they do not yet know they
-need evals, traces, and promotion gates. AgentOS gives them those before they
+need evals, traces, and promotion gates. Curie gives them those before they
 learn the hard way, and it does so as a tool they can build on, own, and run on
 their own infrastructure rather than a black box they rent.
 
 Increasingly the developer builds agents by pointing a coding agent (Claude Code,
 Codex, Cursor) at the work rather than hand-writing every file. So the *interface*
-to AgentOS is drifting to the developer's coding agent: they point it at AgentOS
+to Curie is drifting to the developer's coding agent: they point it at Curie
 and it authors the skills, wires the connectors, writes the evals, and ships the
-bundle. The human stays in the loop through the agent, rarely typing `agentos`
-directly. This does not change who adopts AgentOS or who owns the stack; it
-changes who operates it. AgentOS is a harness a coding agent can drive to build
+bundle. The human stays in the loop through the agent, rarely typing `curie`
+directly. This does not change who adopts Curie or who owns the stack; it
+changes who operates it. Curie is a harness a coding agent can drive to build
 agents properly, because the one thing a coding agent cannot guarantee on its own
 is that a skill working locally will behave identically deployed and on a cluster.
 That guarantee is what the harness supplies.
 
-## What makes it AgentOS
+## What makes it Curie
 
 Six commitments that should hold across every feature we build:
 
@@ -81,7 +81,7 @@ Six commitments that should hold across every feature we build:
 
 ## What it could become
 
-Near term, AgentOS is how we deliver agent work faster: a repeatable delivery
+Near term, Curie is how we deliver agent work faster: a repeatable delivery
 artifact where each project costs a fraction of the last, and the platform is
 the boundary that keeps bespoke agent development from becoming
 "Accenture for agents."

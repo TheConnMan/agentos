@@ -13,7 +13,7 @@ harness-swap promise. We intend OpenCode (`sst/opencode`) to be that second
 harness: it is the direction the ecosystem is moving and it brings capabilities
 we would otherwise build ourselves.
 
-Investigation of OpenCode against the primitives AgentOS relies on found that it
+Investigation of OpenCode against the primitives Curie relies on found that it
 ships most of them as first-class configuration - but with two consequences that
 make this a genuine architectural fork, not a drop-in.
 

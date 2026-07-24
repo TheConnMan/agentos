@@ -4,7 +4,7 @@ Date: 2026-07-17
 
 Status: Accepted
 
-Implements [#558](https://github.com/curie-eng/agentos/issues/558).
+Implements [#558](https://github.com/curie-eng/curie/issues/558).
 Supersedes the "a policy gate refuses a grant outright" half of
 [ADR-0046](0046-converged-approval-gates-and-durable-provenance.md) Decision C —
 and only that half. Every other property ADR-0046 established (durable
@@ -20,7 +20,7 @@ permission gate stays the sole tool authority, so a policy-gated action costs th
 human two approvals: one for the business decision, one for the tool execution.
 `translate.py` stamps `approval_gate_kind='policy'` with `approval_granted_tool`
 left `None`, and the worker's `approval_grant_tool`
-(`apps/worker/src/agentos_worker/binding.py`) refused any `gate_kind='policy'`
+(`apps/worker/src/curie_worker/binding.py`) refused any `gate_kind='policy'`
 row outright.
 
 That is correct but not free. The design behind ADR-0046 established why a
@@ -130,6 +130,6 @@ its `CHECK (gate_kind IN ('permission','policy'))` are reused as-is.
   path, the model-forgery protections (`guard_reserved_summary`, the
   manifest-sourced tool), and the NULL-`gate_kind` rolling-deploy fallback are all
   unchanged.
-- **The CLI manifest mirrors carry the field** so `agentos <tier> approvals` and
+- **The CLI manifest mirrors carry the field** so `curie <tier> approvals` and
   `init --from-spec` round-trip a grantable gate without dropping it; the arming
   and ambiguity logic stays Python-authoritative.

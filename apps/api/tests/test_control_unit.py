@@ -3,9 +3,9 @@
 import uuid
 
 import pytest
-from agentos_api.config import Settings
-from agentos_api.killswitch import KILL_CHANNEL, kill_key
-from agentos_api.schemas import BudgetConfig
+from curie_api.config import Settings
+from curie_api.killswitch import KILL_CHANNEL, kill_key
+from curie_api.schemas import BudgetConfig
 from pydantic import ValidationError
 
 
@@ -23,8 +23,8 @@ def test_valkey_dsn_honors_the_password_override() -> None:
 
 def test_kill_key_matches_the_seam_contract() -> None:
     agent_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
-    assert kill_key(agent_id) == "agentos:kill:00000000-0000-0000-0000-000000000001"
-    assert KILL_CHANNEL == "agentos:kill-events"
+    assert kill_key(agent_id) == "curie:kill:00000000-0000-0000-0000-000000000001"
+    assert KILL_CHANNEL == "curie:kill-events"
 
 
 def test_budget_allows_null_and_positive_values() -> None:

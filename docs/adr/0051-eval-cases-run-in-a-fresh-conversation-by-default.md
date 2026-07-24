@@ -4,7 +4,7 @@ Date: 2026-07-17
 
 Status: Accepted
 
-Implements [#550](https://github.com/curie-eng/agentos/issues/550). Extends
+Implements [#550](https://github.com/curie-eng/curie/issues/550). Extends
 ADR-0019 (the frozen eval-case format): it adds one optional field to that schema
 and pins the runtime isolation semantics the format now implies. It does not
 supersede ADR-0019; the suite-object-with-graders shape stays canonical and
@@ -14,7 +14,7 @@ frozen in place.
 
 Both eval-suite runners drive their cases sequentially against **one** runner
 endpoint: the platform worker (`apps/worker/.../eval/runner.py`) and the CLI's
-`agentos skill eval` (`cli/src/commands.rs::run_suite_cases`). The runner holds
+`curie skill eval` (`cli/src/commands.rs::run_suite_cases`). The runner holds
 one long-lived model session per process (ADR-0003, for prompt-cache affinity
 across a thread's turns), so every case in a suite ran **inside the same growing
 conversation**. Case N could see cases 1..N-1's messages.
@@ -58,7 +58,7 @@ same bearer token as the other `POST` routes.
 
 This is a deliberate, explicit control — **not** per-turn session churn. The
 one-long-lived-session-per-process invariant still holds for the message path,
-which never calls reset. A thread with a durable `AGENTOS_HISTORY_REF` still
+which never calls reset. A thread with a durable `CURIE_HISTORY_REF` still
 rehydrates *its own* history preamble on reconnect (that is the thread's real
 history, not a cross-case leak); an eval runner, which has no history ref, comes
 up empty.

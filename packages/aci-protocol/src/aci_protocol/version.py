@@ -2,7 +2,7 @@
 
 This is the single source of truth for the wire version embedded in every
 outbound event and in the exported JSON Schema. The ACI is versioned as semver,
-independent of the AgentOS release: the number tracks the wire contract's
+independent of the Curie release: the number tracks the wire contract's
 compatibility, not the product's cadence.
 
 The compatibility rule a consumer applies is same ``major.minor`` under 0.x
@@ -20,7 +20,7 @@ the guard.
 import re
 from typing import Final
 
-PROTOCOL_VERSION: Final = "0.2.6"
+PROTOCOL_VERSION: Final = "0.2.7"
 
 # The wire field carrying the protocol version on every outbound event. Both
 # exporters special-case this field by name; do not rename without updating them.

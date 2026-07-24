@@ -1,8 +1,8 @@
 """Shared fixtures: a DISPOSABLE per-run database + a TestClient.
 
 Every suite run provisions its own throwaway database on the compose Postgres
-server (agentos_test_<utc>_<rand>), migrates it, and drops it at teardown, so the
-tests never touch the shared `agentos` database. This is the deterministic fix
+server (curie_test_<utc>_<rand>), migrates it, and drops it at teardown, so the
+tests never touch the shared `curie` database. This is the deterministic fix
 for the cross-lane failure where one lane's migration stamped the shared DB ahead
 of main and reddened another lane's suite. Integration tests still run against a
 real Postgres (and real Valkey/Langfuse); nothing here mocks them.
@@ -17,10 +17,10 @@ from typing import Any
 
 import asyncpg
 import pytest
-from agentos_api.config import get_settings
-from agentos_api.main import create_app
 from alembic import command
 from alembic.config import Config
+from curie_api.config import get_settings
+from curie_api.main import create_app
 from fastapi.testclient import TestClient
 from sqlalchemy import make_url
 from sqlalchemy.engine import URL
@@ -29,7 +29,7 @@ from sqlalchemy.sql import text
 
 API_DIR = Path(__file__).resolve().parents[1]
 ALEMBIC_DIR = API_DIR / "alembic"
-DB_PREFIX = "agentos_test_"
+DB_PREFIX = "curie_test_"
 TS_FORMAT = "%Y%m%d%H%M%S"
 
 
@@ -131,8 +131,8 @@ async def _truncate() -> None:
         async with engine.begin() as conn:
             await conn.execute(
                 text(
-                    "TRUNCATE agentos.approvals, agentos.deployments, "
-                    "agentos.agent_versions, agentos.agents CASCADE"
+                    "TRUNCATE curie.approvals, curie.deployments, "
+                    "curie.agent_versions, curie.agents CASCADE"
                 )
             )
     finally:

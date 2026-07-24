@@ -3,7 +3,7 @@
 This is the durable gate against a shipped example drifting back to a retired
 shape: it globs every ``examples/**/evals/cases.json`` and parses each as an
 ``EvalSuite``. If a first-party example is not platform-loadable, the README
-onboarding command ``agentos skill eval`` would hard-fail on it, so this test
+onboarding command ``curie skill eval`` would hard-fail on it, so this test
 fails first.
 """
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from agentos_worker.eval.models import EvalSuite
+from curie_worker.eval.models import EvalSuite
 
 # apps/worker/tests/eval/test_examples.py -> parents[4] is the repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[4]

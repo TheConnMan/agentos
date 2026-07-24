@@ -1,9 +1,9 @@
-AgentOS
-https://github.com/curie-eng/agentos
+Curie
+https://github.com/curie-eng/curie
 
-Copyright 2026 Curie Engineering
+Copyright 2026 CurieTech AI
 
-This product includes software developed at Curie Engineering.
+This product includes software developed at CurieTech AI.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,6 +17,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-"AgentOS" is a trademark of Curie Engineering. The Apache License covers
+"Curie" is a trademark of CurieTech AI. The Apache License covers
 the copyright in the code but does not grant any trademark rights; see
 TRADEMARKS.md for the trademark policy.

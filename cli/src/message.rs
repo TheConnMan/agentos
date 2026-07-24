@@ -41,7 +41,7 @@ use crate::queue::{self, connect, diagnostics, synthetic_turn, xadd};
 use crate::state::{save_turn, TurnContext, TurnVerb};
 
 pub const DEFAULT_STREAM: &str = queue::DEFAULT_STREAM;
-pub const DEFAULT_USER: &str = "U-agentos-message";
+pub const DEFAULT_USER: &str = "U-curie-message";
 pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
 /// Fixed stub port so the advertised URL is deterministic; `0` picks ephemeral.
 pub const DEFAULT_LISTEN_PORT: u16 = 8155;
@@ -54,9 +54,9 @@ pub const DEFAULT_API_LOCAL_PORT: u16 = 8123;
 /// The chart's default Valkey password (values.yaml `valkey.password`).
 pub const DEFAULT_VALKEY_PASSWORD: &str = "valkeypass";
 /// The chart's default platform API key (values.yaml `api.apiKey`).
-pub const DEFAULT_API_KEY: &str = "agentos-dev-key";
+pub const DEFAULT_API_KEY: &str = "curie-dev-key";
 
-/// clap `value_parser` for every `--api-key` / `$AGENTOS_API_KEY` declaration.
+/// clap `value_parser` for every `--api-key` / `$CURIE_API_KEY` declaration.
 ///
 /// An empty-string credential is absent, not "explicitly supplied" (issue #540).
 /// clap reports an env var set to `""` as PRESENT, so without this an empty
@@ -71,13 +71,13 @@ pub const DEFAULT_API_KEY: &str = "agentos-dev-key";
 /// why the env source is consulted HERE rather than left to clap: clap resolves
 /// an explicit flag ahead of `env`, so by the time the parser runs the env
 /// source is already out of the running. Without this, `--api-key ""` under a
-/// real `$AGENTOS_API_KEY` would send the well-known dev sentinel instead of the
+/// real `$CURIE_API_KEY` would send the well-known dev sentinel instead of the
 /// operator's key.
 ///
 /// Mirrors the rule already settled in `ops.rs::resolve_up_credentials`,
 /// `local.rs::model_mode_from_env`, and `secrets.rs::save_value`.
 pub fn api_key_or_default(raw: &str) -> Result<String, String> {
-    Ok(resolve_api_key(raw, env::var("AGENTOS_API_KEY").ok()))
+    Ok(resolve_api_key(raw, env::var("CURIE_API_KEY").ok()))
 }
 
 /// The pure core of [`api_key_or_default`], with the env source passed in so the
@@ -105,7 +105,7 @@ fn resolve_api_key(raw: &str, env_value: Option<String>) -> String {
 pub fn cluster_api_key(raw: &str) -> Result<String, String> {
     Ok(resolve_supplied_credential(
         raw,
-        env::var("AGENTOS_API_KEY").ok(),
+        env::var("CURIE_API_KEY").ok(),
     ))
 }
 
@@ -113,7 +113,7 @@ pub fn cluster_api_key(raw: &str) -> Result<String, String> {
 pub fn cluster_valkey_password(raw: &str) -> Result<String, String> {
     Ok(resolve_supplied_credential(
         raw,
-        env::var("AGENTOS_VALKEY_PASSWORD").ok(),
+        env::var("CURIE_VALKEY_PASSWORD").ok(),
     ))
 }
 
@@ -157,7 +157,7 @@ where
 /// (`compose.dev.yaml`), where the CLI enqueues and the compose worker consumes.
 pub const DEFAULT_LOCAL_VALKEY_PORT: u16 = 26379;
 /// Local mode: the compose API's published host port (`compose.dev.yaml`
-/// `agentos-api`), reached directly (routers mount at root, so no `/api`).
+/// `curie-api`), reached directly (routers mount at root, so no `/api`).
 pub const DEFAULT_LOCAL_API_URL: &str = "http://localhost:28000";
 /// Local mode: the fixed port the stub binds. It MUST equal the port in the
 /// compose worker's `SLACK_API_BASE_URL` (`http://localhost:8155/api/`) so the
@@ -170,7 +170,7 @@ pub const DEFAULT_LOCAL_STUB_PORT: u16 = DEFAULT_LISTEN_PORT;
 /// worker (issue #680). Set it (e.g. `host.docker.internal`, or any routable
 /// host) for a topology this binary cannot infer from its own target OS -- most
 /// notably Docker Desktop running on a Linux host.
-pub const LOCAL_STUB_HOST_ENV: &str = "AGENTOS_LOCAL_STUB_HOST";
+pub const LOCAL_STUB_HOST_ENV: &str = "CURIE_LOCAL_STUB_HOST";
 
 /// How the local-mode Slack reply stub binds and advertises itself to the
 /// compose worker.
@@ -197,7 +197,7 @@ pub struct LocalStubBinding {
 /// synthetic turn's reply POST from the worker lands nowhere and the zero-Slack
 /// loop never completes on macOS (real-Slack turns are unaffected).
 ///
-/// `AGENTOS_LOCAL_STUB_HOST` overrides the advertised host for any topology this
+/// `CURIE_LOCAL_STUB_HOST` overrides the advertised host for any topology this
 /// binary cannot infer from its target OS (e.g. Docker Desktop on Linux); an
 /// explicit override also binds `0.0.0.0`, since a non-loopback advertised host
 /// is only reachable off the loopback.
@@ -224,7 +224,7 @@ fn resolve_local_stub_binding(env_override: Option<String>, is_macos: bool) -> L
 }
 
 /// Process-level wrapper over [`resolve_local_stub_binding`] reading the real
-/// `AGENTOS_LOCAL_STUB_HOST` and this binary's target OS.
+/// `CURIE_LOCAL_STUB_HOST` and this binary's target OS.
 fn local_stub_binding() -> LocalStubBinding {
     resolve_local_stub_binding(
         env::var(LOCAL_STUB_HOST_ENV).ok(),
@@ -262,7 +262,7 @@ pub struct MessageOpts {
     pub stream: String,
     pub timeout_secs: u64,
     pub dry_run: bool,
-    /// Local mode: drive the compose stack (`agentos local up`) instead of a
+    /// Local mode: drive the compose stack (`curie local up`) instead of a
     /// Kubernetes release. No kubectl/helm/port-forwards/wiring; enqueue straight
     /// to the compose Valkey and let the containerized worker answer.
     pub local: bool,
@@ -280,7 +280,7 @@ fn tier_str(verb: TurnVerb) -> &'static str {
     }
 }
 
-/// Write `.agentos/last-turn.json` for this turn WITHOUT printing the continue
+/// Write `.curie/last-turn.json` for this turn WITHOUT printing the continue
 /// hint. Called before the (potentially long) approval wait so an interrupted or
 /// closed terminal still leaves a thread `message --continue` can recover (#766);
 /// the terminal paths then call [`persist_and_hint`], which rewrites the identical
@@ -307,7 +307,7 @@ fn save_turn_context(
         thread_ts,
         // Empty is unset (#540): otherwise this records an `api_key_env` that
         // resolves to nothing on the next `--continue`.
-        env::var("AGENTOS_API_KEY").ok().filter(|v| !v.is_empty()),
+        env::var("CURIE_API_KEY").ok().filter(|v| !v.is_empty()),
     );
     let cwd = env::current_dir().context("resolving the current working directory")?;
     save_turn(&cwd, &ctx)
@@ -377,8 +377,8 @@ pub fn select_channel(agents: &[Agent], explicit: Option<&str>) -> Result<String
     }
     match agents {
         [] => bail!(
-            "no agents are deployed on the platform API; deploy one with `agentos local deploy` \
-             or `agentos cluster deploy`, or pass --channel <id>"
+            "no agents are deployed on the platform API; deploy one with `curie local deploy` \
+             or `curie cluster deploy`, or pass --channel <id>"
         ),
         [only] => Ok(only.slack_channel.clone()),
         many => {
@@ -819,7 +819,7 @@ async fn bounded_diagnostics(
         })
 }
 
-/// The `agentos local message` handler: drive the compose stack directly.
+/// The `curie local message` handler: drive the compose stack directly.
 ///
 /// The cluster path's self-plumbing (kubectl port-forwards) is cluster-specific,
 /// so local mode keeps only the shared engine: bind the Slack stub, enqueue the
@@ -887,7 +887,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
         None => {
             let api = ApiClient::new(&api_base, &opts.api_key)?;
             let agents = api.list_agents().await.with_context(|| {
-                format!("listing agents via {api_base} (is `agentos local up` running?)")
+                format!("listing agents via {api_base} (is `curie local up` running?)")
             })?;
             let channel = select_channel(&agents, None)?;
             (channel, agents.first().map(|a| a.name.clone()))
@@ -953,7 +953,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
             step.done("awaiting approval");
             // Persist the turn context BEFORE the (possibly full --timeout-secs)
             // approval wait: if the operator interrupts or the terminal closes
-            // while the approval is pending, `.agentos/last-turn.json` must still
+            // while the approval is pending, `.curie/last-turn.json` must still
             // hold the thread for `message --continue` (#766). The terminal paths
             // re-persist the identical context and print the continue hint once.
             persist_turn_quietly(&opts, TurnVerb::Local, &channel, &thread_ts);
@@ -1058,7 +1058,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
 /// - `--actor-channel <channel>` is required by the DEFAULT approver set. With no
 ///   `approvers` block on the route binding, the API selects
 ///   `SlackChannelMembers(approval.card_channel or approval.reply_channel)`
-///   (`apps/api/src/agentos_api/slack_approvers.py`), whose `contains` admits the
+///   (`apps/api/src/curie_api/slack_approvers.py`), whose `contains` admits the
 ///   actor only when `actor_channel` equals that channel -- otherwise the resolve
 ///   is refused 403 ("resolve this from the approval's channel"). The channel this
 ///   turn routed to IS `reply_channel`, so it is the correct value in the common
@@ -1068,9 +1068,7 @@ async fn message_local(opts: MessageOpts) -> Result<()> {
 ///   passing it is harmless there.)
 fn approval_resolve_command(tier: &str, agent: Option<&str>, channel: &str, id: &str) -> String {
     let agent = agent.unwrap_or("<AGENT>");
-    format!(
-        "agentos {tier} approvals {agent} --resolve {id} --as <user> --actor-channel '{channel}'"
-    )
+    format!("curie {tier} approvals {agent} --resolve {id} --as <user> --actor-channel '{channel}'")
 }
 
 /// The awaiting-approval terminal wording a `local`/`cluster message` prints when
@@ -1093,11 +1091,11 @@ fn note_approval_pending(ui: &crate::ui::Ui, tier: &str, agent: Option<&str>, ch
          resolves it.",
     );
     ui.note(&format!(
-        "resolve it later with `{command}` (the id is listed by `agentos {tier} approvals \
+        "resolve it later with `{command}` (the id is listed by `curie {tier} approvals \
          <AGENT> --list`, which also reports the approval's channel if its route binds one). \
          Because this command has exited, the resumed reply does NOT print here -- read it from \
          the agent transcript. There is no clickable Slack card unless a real workspace is \
-         connected (`agentos {tier} comms --slack`).",
+         connected (`curie {tier} comms --slack`).",
     ));
 }
 
@@ -1543,7 +1541,7 @@ pub async fn message(opts: MessageOpts) -> Result<()> {
 // eval: the same evals/cases.json at the local and cluster tiers
 // ---------------------------------------------------------------------------
 
-/// Options for `agentos local eval` / `agentos cluster eval`, mirroring their
+/// Options for `curie local eval` / `curie cluster eval`, mirroring their
 /// clap flags. The connection surface is the `message` subset (no per-turn
 /// `text`/`thread`); `cases` selects the suite and `local` picks the tier.
 pub struct EvalOpts {
@@ -1869,7 +1867,7 @@ pub async fn eval(opts: EvalOpts) -> Result<()> {
                 )
                 .with_fix(
                     "drop --cases to sweep the deployed suite, or omit --model to grade a local \
-                     suite in-CLI with `agentos <skill|local|cluster> eval --cases <file>`",
+                     suite in-CLI with `curie <skill|local|cluster> eval --cases <file>`",
                 ),
             ));
         }
@@ -1902,8 +1900,8 @@ pub fn select_agent_id(agents: &[Agent], channel: Option<&str>) -> Result<String
     }
     match agents {
         [] => bail!(
-            "no agents are deployed on the platform API; deploy one with `agentos local deploy` \
-             or `agentos cluster deploy`, or pass --channel <id>"
+            "no agents are deployed on the platform API; deploy one with `curie local deploy` \
+             or `curie cluster deploy`, or pass --channel <id>"
         ),
         [only] => Ok(only.id.clone()),
         many => {
@@ -1935,7 +1933,7 @@ pub fn guard_fake_sweep(fake: bool, models: &[String], local: bool) -> Result<()
         return Ok(());
     }
     let fix = if local {
-        "set AGENTOS_CREDENTIALS to a real model credential and re-run `agentos local up`, then \
+        "set CURIE_CREDENTIALS to a real model credential and re-run `curie local up`, then \
          sweep again"
     } else {
         "re-install the release with a real model (`--set agentSandbox.runner.fakeModel=false`, \
@@ -1966,11 +1964,11 @@ pub fn guard_fake_sweep(fake: bool, models: &[String], local: bool) -> Result<()
 }
 
 /// Read the fake-ness of the tier's DEPLOYED worker: the already-composed value
-/// of `AGENTOS_FAKE_MODEL` on the artifact that is actually running.
+/// of `CURIE_FAKE_MODEL` on the artifact that is actually running.
 ///
 /// Deliberately a read of the output, not a re-derivation of the input. The
 /// chart's effective value is the composite `fakeModel AND NOT inference.deploy`
-/// and compose's is `${AGENTOS_FAKE_MODEL:-1}`; re-deriving either in the CLI
+/// and compose's is `${CURIE_FAKE_MODEL:-1}`; re-deriving either in the CLI
 /// would give a second config that drifts from the truth (an
 /// `inference.deploy` + `fakeModel=true` install is a REAL install, and shell
 /// env is not what the running container was booted with). A probe failure is
@@ -1996,7 +1994,7 @@ async fn probe_fake_model(opts: &EvalOpts) -> Result<bool> {
         }
         stdout
             .lines()
-            .find_map(|l| l.strip_prefix("AGENTOS_FAKE_MODEL="))
+            .find_map(|l| l.strip_prefix("CURIE_FAKE_MODEL="))
             .map(str::to_string)
     } else {
         require_on_path("kubectl")?;
@@ -2010,7 +2008,7 @@ async fn probe_fake_model(opts: &EvalOpts) -> Result<bool> {
                 plain(&deployment),
                 plain("-o"),
                 plain(
-                    "jsonpath={.spec.template.spec.containers[*].env[?(@.name==\"AGENTOS_FAKE_MODEL\")].value}",
+                    "jsonpath={.spec.template.spec.containers[*].env[?(@.name==\"CURIE_FAKE_MODEL\")].value}",
                 ),
             ],
         );
@@ -2028,18 +2026,18 @@ async fn probe_fake_model(opts: &EvalOpts) -> Result<bool> {
     };
     // An absent variable means the worker was booted without the flag at all,
     // which is the live path on both tiers (compose only defaults to fake
-    // through `${AGENTOS_FAKE_MODEL:-1}`, which materializes the value).
+    // through `${CURIE_FAKE_MODEL:-1}`, which materializes the value).
     Ok(env
         .as_deref()
         .is_some_and(crate::local::fake_model_is_truthy))
 }
 
 /// The compose service the worker runs as, per `compose.dev.yaml`. Container
-/// NAMES vary with the compose project (`<project>-agentos-worker-1`), so the
+/// NAMES vary with the compose project (`<project>-curie-worker-1`), so the
 /// service label is the only stable selector; `cli/tests/fake_tier_plumbing.rs`
 /// pins this against the compose file so a service rename cannot silently
 /// blind the probe again.
-pub(crate) const COMPOSE_WORKER_SERVICE: &str = "agentos-worker";
+pub(crate) const COMPOSE_WORKER_SERVICE: &str = "curie-worker";
 
 /// The label selector the probe matches on, quoted into diagnostics so an
 /// operator can re-run the same `docker ps` and see what the CLI saw.
@@ -2075,12 +2073,12 @@ fn select_worker_container(stdout: &str) -> Result<String> {
         [only] => Ok((*only).to_string()),
         [] => bail!(
             "no running container matches `{}`, so the sweep cannot read which model the local \
-             stack is running. Start a stack with `agentos local up`.",
+             stack is running. Start a stack with `curie local up`.",
             worker_label_selector()
         ),
         many => bail!(
             "{} running containers match `{}` ({}); a sweep cannot tell which stack it would \
-             measure. Stop the extras with `agentos local down`.",
+             measure. Stop the extras with `curie local down`.",
             many.len(),
             worker_label_selector(),
             many.join(", ")
@@ -2340,7 +2338,7 @@ async fn eval_local(opts: EvalOpts, suite: EvalSuite) -> Result<()> {
         None => {
             let api = ApiClient::new(&api_base, &opts.api_key)?;
             let agents = api.list_agents().await.with_context(|| {
-                format!("listing agents via {api_base} (is `agentos local up` running?)")
+                format!("listing agents via {api_base} (is `curie local up` running?)")
             })?;
             select_channel(&agents, None)?
         }
@@ -2360,10 +2358,10 @@ fn looks_like_enqueue_timeout(err: &anyhow::Error) -> bool {
 }
 
 /// Enrich a cluster-eval enqueue/await timeout with a single-node-saturation
-/// hint. The opaque `XADD onto agentos:runs` error does not name the most common
+/// hint. The opaque `XADD onto curie:runs` error does not name the most common
 /// cause on a dev cluster: one schedulable node saturated by concurrent sandbox
 /// claims. When there is at most one schedulable node (or the count cannot be
-/// read from `kubectl get nodes`), point the operator at `agentos cluster
+/// read from `kubectl get nodes`), point the operator at `curie cluster
 /// status`. The original error stays as the anyhow cause; it is never swallowed.
 async fn enrich_cluster_enqueue_timeout(err: anyhow::Error) -> anyhow::Error {
     if !looks_like_enqueue_timeout(&err) {
@@ -2373,7 +2371,7 @@ async fn enrich_cluster_enqueue_timeout(err: anyhow::Error) -> anyhow::Error {
         // Count read cleanly and the cluster has at most one schedulable node.
         Ok((true, out, _)) if schedulable_node_count(&out) <= 1 => Some(
             "this cluster has at most one schedulable node, which a run can saturate with \
-             concurrent sandbox claims; check `agentos cluster status` for node and sandbox \
+             concurrent sandbox claims; check `curie cluster status` for node and sandbox \
              pressure",
         ),
         // Count read cleanly and there is real headroom: no single-node hint.
@@ -2382,7 +2380,7 @@ async fn enrich_cluster_enqueue_timeout(err: anyhow::Error) -> anyhow::Error {
         // than fail, since single-node saturation is the usual cause here.
         _ => Some(
             "this often indicates a single-node cluster saturated by concurrent sandbox claims; \
-             check `agentos cluster status`",
+             check `curie cluster status`",
         ),
     };
     match hint {
@@ -2482,7 +2480,7 @@ mod tests {
         assert_eq!(
             line,
             format!(
-                "agentos local approvals weather-bot --resolve {id} --as <user> \
+                "curie local approvals weather-bot --resolve {id} --as <user> \
                  --actor-channel 'C-SIM-abc'"
             )
         );
@@ -2492,7 +2490,7 @@ mod tests {
         let line = approval_resolve_command("cluster", None, "C-SIM-xyz", id);
         assert!(line.contains("approvals <AGENT> --resolve"), "{line}");
         assert!(line.contains("--actor-channel 'C-SIM-xyz'"), "{line}");
-        assert!(line.starts_with("agentos cluster approvals"), "{line}");
+        assert!(line.starts_with("curie cluster approvals"), "{line}");
     }
 
     /// The probe is only honest if it filters on the service compose actually
@@ -2512,11 +2510,11 @@ mod tests {
         );
         assert_eq!(
             worker_label_selector(),
-            "label=com.docker.compose.service=agentos-worker"
+            "label=com.docker.compose.service=curie-worker"
         );
         let argv = worker_ps_command().display();
         assert!(
-            argv.contains("--filter label=com.docker.compose.service=agentos-worker"),
+            argv.contains("--filter label=com.docker.compose.service=curie-worker"),
             "docker ps argv lost the service filter: {argv}"
         );
     }
@@ -2524,8 +2522,8 @@ mod tests {
     #[test]
     fn one_matching_container_is_the_worker_to_inspect() {
         assert_eq!(
-            select_worker_container("agentos-agentos-worker-1\n").unwrap(),
-            "agentos-agentos-worker-1"
+            select_worker_container("curie-curie-worker-1\n").unwrap(),
+            "curie-curie-worker-1"
         );
     }
 
@@ -2536,15 +2534,15 @@ mod tests {
         let none = select_worker_container("\n  \n").unwrap_err().to_string();
         assert!(
             none.contains("no running container matches")
-                && none.contains("com.docker.compose.service=agentos-worker"),
+                && none.contains("com.docker.compose.service=curie-worker"),
             "{none}"
         );
-        let many = select_worker_container("a-agentos-worker-1\nb-agentos-worker-1\n")
+        let many = select_worker_container("a-curie-worker-1\nb-curie-worker-1\n")
             .unwrap_err()
             .to_string();
         assert!(
             many.contains("2 running containers match")
-                && many.contains("a-agentos-worker-1, b-agentos-worker-1"),
+                && many.contains("a-curie-worker-1, b-curie-worker-1"),
             "{many}"
         );
     }
@@ -2563,9 +2561,9 @@ mod tests {
             text: "hi".into(),
             channel: channel.map(str::to_string),
             thread: None,
-            namespace: "agentos".into(),
-            release: "agentos".into(),
-            chart: "charts/agentos".into(),
+            namespace: "curie".into(),
+            release: "curie".into(),
+            chart: "charts/curie".into(),
             listen_host: None,
             listen_port: DEFAULT_LISTEN_PORT,
             valkey_local_port: DEFAULT_VALKEY_LOCAL_PORT,
@@ -2581,7 +2579,7 @@ mod tests {
         }
     }
 
-    /// The full `--api-key` x `$AGENTOS_API_KEY` truth table. The load-bearing
+    /// The full `--api-key` x `$CURIE_API_KEY` truth table. The load-bearing
     /// row is `--api-key ""` under a real env key: an empty flag is an ABSENT
     /// flag, so it must resolve to the env key, never to the dev sentinel.
     #[test]
@@ -2684,13 +2682,13 @@ mod tests {
     async fn cluster_credential_propagates_a_discovery_failure() {
         let err = resolve_cluster_credential(None, false, DEFAULT_API_KEY, || async {
             Err(anyhow::anyhow!(
-                "could not read the API key from secret agentos-secrets in namespace agentos"
+                "could not read the API key from secret curie-secrets in namespace curie"
             ))
         })
         .await
         .unwrap_err();
 
-        assert!(err.to_string().contains("agentos-secrets"), "{err}");
+        assert!(err.to_string().contains("curie-secrets"), "{err}");
     }
 
     /// `--dry-run` stays offline: no cluster read, and the printed plan carries
@@ -2708,10 +2706,10 @@ mod tests {
 
     #[test]
     fn port_forward_command_renders_svc_and_ports() {
-        let cmd = port_forward_command("agentos", "agentos", "valkey", 56381, 6379);
+        let cmd = port_forward_command("curie", "curie", "valkey", 56381, 6379);
         assert_eq!(
             cmd.display(),
-            "kubectl -n agentos port-forward svc/agentos-valkey 56381:6379"
+            "kubectl -n curie port-forward svc/curie-valkey 56381:6379"
         );
     }
 
@@ -2840,7 +2838,7 @@ mod tests {
         );
     }
 
-    /// `AGENTOS_LOCAL_STUB_HOST` overrides the advertised host on any topology
+    /// `CURIE_LOCAL_STUB_HOST` overrides the advertised host on any topology
     /// this binary cannot infer (e.g. Docker Desktop on Linux), and an explicit
     /// override binds `0.0.0.0` since a non-loopback host is only reachable off the
     /// loopback -- on both the Linux and macOS target-OS branches.
@@ -2856,7 +2854,7 @@ mod tests {
         }
     }
 
-    /// An empty `AGENTOS_LOCAL_STUB_HOST` is absent, not an explicit choice (same
+    /// An empty `CURIE_LOCAL_STUB_HOST` is absent, not an explicit choice (same
     /// empty-is-unset rule as the api-key parser): it falls back to the OS default.
     #[test]
     fn local_stub_binding_ignores_empty_env_override() {
@@ -2905,11 +2903,11 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|l| l == "kubectl -n agentos port-forward svc/agentos-valkey 56381:6379"),
+                .any(|l| l == "kubectl -n curie port-forward svc/curie-valkey 56381:6379"),
             "{lines:?}"
         );
         assert!(
-            !lines.iter().any(|l| l.contains("svc/agentos-api")),
+            !lines.iter().any(|l| l.contains("svc/curie-api")),
             "explicit channel needs no api forward: {lines:?}"
         );
         // Issue #19: the reply routes per turn, so there is no worker-global
@@ -2947,7 +2945,7 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|l| l == "kubectl -n agentos port-forward svc/agentos-api 8123:8000"),
+                .any(|l| l == "kubectl -n curie port-forward svc/curie-api 8123:8000"),
             "no --channel -> api forward: {lines:?}"
         );
         assert!(
@@ -2972,13 +2970,13 @@ mod tests {
         // Explicit channel passes through verbatim.
         let v = message_dry_run_json(
             "local",
-            "agentos:turns",
+            "curie:turns",
             Some("C123"),
             "http://localhost:8155/api/",
         );
         assert_eq!(v["dry_run"], serde_json::json!(true));
         assert_eq!(v["target"], serde_json::json!("local"));
-        assert_eq!(v["stream"], serde_json::json!("agentos:turns"));
+        assert_eq!(v["stream"], serde_json::json!("curie:turns"));
         assert_eq!(v["channel"], serde_json::json!("C123"));
         assert_eq!(
             v["reply_endpoint"],
@@ -2998,8 +2996,8 @@ mod tests {
         EvalOpts {
             cases: None,
             channel: channel.map(str::to_string),
-            namespace: "agentos".into(),
-            release: "agentos".into(),
+            namespace: "curie".into(),
+            release: "curie".into(),
             listen_host: None,
             listen_port: DEFAULT_LISTEN_PORT,
             valkey_local_port: DEFAULT_VALKEY_LOCAL_PORT,
@@ -3135,12 +3133,12 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|l| l == "kubectl -n agentos port-forward svc/agentos-valkey 56381:6379"),
+                .any(|l| l == "kubectl -n curie port-forward svc/curie-valkey 56381:6379"),
             "{lines:?}"
         );
         // Explicit channel -> no api forward.
         assert!(
-            !lines.iter().any(|l| l.contains("svc/agentos-api")),
+            !lines.iter().any(|l| l.contains("svc/curie-api")),
             "explicit channel needs no api forward: {lines:?}"
         );
         assert!(
@@ -3341,7 +3339,7 @@ mod tests {
         // #622 at the local/cluster tier: the platform matrix's `EvalModelSummary`
         // for a model that never produced a completed turn reports `total > 0,
         // completed == 0` (every case landed as a graded FAIL with `error` set --
-        // see `apps/api/src/agentos_api/evals.py::_completed`). The row still
+        // see `apps/api/src/curie_api/evals.py::_completed`). The row still
         // counts toward readiness (the sweep DID land, unlike the timeout path
         // below), but `SweepRow::never_completed` reads it as the distinct
         // outcome rather than a real 0%.

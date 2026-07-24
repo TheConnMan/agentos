@@ -6,15 +6,15 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: &str = "0.2.6";
+pub const PROTOCOL_VERSION: &str = "0.2.7";
 
-pub const RUNS_STREAM_DEFAULT: &str = "agentos:runs";
+pub const RUNS_STREAM_DEFAULT: &str = "curie:runs";
 
-pub const WORKER_GROUP_DEFAULT: &str = "agentos-workers";
+pub const WORKER_GROUP_DEFAULT: &str = "curie-workers";
 
-pub const EVAL_STREAM_DEFAULT: &str = "agentos:evals";
+pub const EVAL_STREAM_DEFAULT: &str = "curie:evals";
 
-pub const EVAL_CONSUMER_GROUP_DEFAULT: &str = "agentos-eval-workers";
+pub const EVAL_CONSUMER_GROUP_DEFAULT: &str = "curie-eval-workers";
 
 pub const STREAM_PAYLOAD_FIELD: &str = "payload";
 
@@ -175,33 +175,33 @@ pub struct BootEnv {
 /// The env key is the contract; the Rust CLI and the chart render-assert
 /// pin against these instead of retyping the literals.
 pub mod env_keys {
-    pub const AGENTOS_APPROVAL_DECISION: &str = "AGENTOS_APPROVAL_DECISION";
-    pub const AGENTOS_APPROVAL_GRANT_TOOL: &str = "AGENTOS_APPROVAL_GRANT_TOOL";
-    pub const AGENTOS_APPROVAL_REQUIRED_TOOLS: &str = "AGENTOS_APPROVAL_REQUIRED_TOOLS";
-    pub const AGENTOS_APPROVAL_RESUMED_KIND: &str = "AGENTOS_APPROVAL_RESUMED_KIND";
-    pub const AGENTOS_BUDGET: &str = "AGENTOS_BUDGET";
-    pub const AGENTOS_BUNDLE_REF: &str = "AGENTOS_BUNDLE_REF";
-    pub const AGENTOS_CONNECTOR_SECRET_KEYS: &str = "AGENTOS_CONNECTOR_SECRET_KEYS";
-    pub const AGENTOS_CREDENTIALS: &str = "AGENTOS_CREDENTIALS";
-    pub const AGENTOS_FAKE_MODEL: &str = "AGENTOS_FAKE_MODEL";
-    pub const AGENTOS_HISTORY_MAX_BYTES: &str = "AGENTOS_HISTORY_MAX_BYTES";
-    pub const AGENTOS_HISTORY_MAX_TURNS: &str = "AGENTOS_HISTORY_MAX_TURNS";
-    pub const AGENTOS_HISTORY_REF: &str = "AGENTOS_HISTORY_REF";
-    pub const AGENTOS_HISTORY_TOKEN: &str = "AGENTOS_HISTORY_TOKEN";
-    pub const AGENTOS_MAX_TURNS: &str = "AGENTOS_MAX_TURNS";
-    pub const AGENTOS_MEMORY_REF: &str = "AGENTOS_MEMORY_REF";
-    pub const AGENTOS_MEMORY_TOKEN: &str = "AGENTOS_MEMORY_TOKEN";
-    pub const AGENTOS_MODEL: &str = "AGENTOS_MODEL";
-    pub const AGENTOS_MODEL_API_BACKEND: &str = "AGENTOS_MODEL_API_BACKEND";
-    pub const AGENTOS_MODEL_ENV_KEY: &str = "AGENTOS_MODEL_ENV_KEY";
-    pub const AGENTOS_PLUGIN_DIR: &str = "AGENTOS_PLUGIN_DIR";
-    pub const AGENTOS_RUNNER_PORT: &str = "AGENTOS_RUNNER_PORT";
-    pub const AGENTOS_RUNNER_TOKEN: &str = "AGENTOS_RUNNER_TOKEN";
-    pub const AGENTOS_SANDBOX_ID: &str = "AGENTOS_SANDBOX_ID";
-    pub const AGENTOS_SESSION_ID: &str = "AGENTOS_SESSION_ID";
-    pub const AGENTOS_STATE_TOKEN: &str = "AGENTOS_STATE_TOKEN";
-    pub const AGENTOS_STATE_URL: &str = "AGENTOS_STATE_URL";
     pub const ANTHROPIC_BASE_URL: &str = "ANTHROPIC_BASE_URL";
+    pub const CURIE_APPROVAL_DECISION: &str = "CURIE_APPROVAL_DECISION";
+    pub const CURIE_APPROVAL_GRANT_TOOL: &str = "CURIE_APPROVAL_GRANT_TOOL";
+    pub const CURIE_APPROVAL_REQUIRED_TOOLS: &str = "CURIE_APPROVAL_REQUIRED_TOOLS";
+    pub const CURIE_APPROVAL_RESUMED_KIND: &str = "CURIE_APPROVAL_RESUMED_KIND";
+    pub const CURIE_BUDGET: &str = "CURIE_BUDGET";
+    pub const CURIE_BUNDLE_REF: &str = "CURIE_BUNDLE_REF";
+    pub const CURIE_CONNECTOR_SECRET_KEYS: &str = "CURIE_CONNECTOR_SECRET_KEYS";
+    pub const CURIE_CREDENTIALS: &str = "CURIE_CREDENTIALS";
+    pub const CURIE_FAKE_MODEL: &str = "CURIE_FAKE_MODEL";
+    pub const CURIE_HISTORY_MAX_BYTES: &str = "CURIE_HISTORY_MAX_BYTES";
+    pub const CURIE_HISTORY_MAX_TURNS: &str = "CURIE_HISTORY_MAX_TURNS";
+    pub const CURIE_HISTORY_REF: &str = "CURIE_HISTORY_REF";
+    pub const CURIE_HISTORY_TOKEN: &str = "CURIE_HISTORY_TOKEN";
+    pub const CURIE_MAX_TURNS: &str = "CURIE_MAX_TURNS";
+    pub const CURIE_MEMORY_REF: &str = "CURIE_MEMORY_REF";
+    pub const CURIE_MEMORY_TOKEN: &str = "CURIE_MEMORY_TOKEN";
+    pub const CURIE_MODEL: &str = "CURIE_MODEL";
+    pub const CURIE_MODEL_API_BACKEND: &str = "CURIE_MODEL_API_BACKEND";
+    pub const CURIE_MODEL_ENV_KEY: &str = "CURIE_MODEL_ENV_KEY";
+    pub const CURIE_PLUGIN_DIR: &str = "CURIE_PLUGIN_DIR";
+    pub const CURIE_RUNNER_PORT: &str = "CURIE_RUNNER_PORT";
+    pub const CURIE_RUNNER_TOKEN: &str = "CURIE_RUNNER_TOKEN";
+    pub const CURIE_SANDBOX_ID: &str = "CURIE_SANDBOX_ID";
+    pub const CURIE_SESSION_ID: &str = "CURIE_SESSION_ID";
+    pub const CURIE_STATE_TOKEN: &str = "CURIE_STATE_TOKEN";
+    pub const CURIE_STATE_URL: &str = "CURIE_STATE_URL";
     pub const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
     pub const OTEL_EXPORTER_OTLP_HEADERS: &str = "OTEL_EXPORTER_OTLP_HEADERS";
     pub const OTEL_EXPORTER_OTLP_PROTOCOL: &str = "OTEL_EXPORTER_OTLP_PROTOCOL";

@@ -41,7 +41,7 @@ export function Sidebar() {
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px 16px" }}>
         <Dot color={C.brand} size={9} />
-        <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: -0.3 }}>AgentOS</span>
+        <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: -0.3 }}>Curie</span>
       </div>
 
       <button

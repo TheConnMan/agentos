@@ -1,6 +1,6 @@
 # Security Policy
 
-AgentOS is a self-hostable platform for running Slack-based agents. This
+Curie is a self-hostable platform for running Slack-based agents. This
 document states the trust model plainly, explains how to report a
 vulnerability, lists supported versions, and spells out what an operator is
 responsible for.
@@ -10,9 +10,9 @@ responsible for.
 **A bundle is code execution. The control is the sandbox, not the bundle
 contents.**
 
-The deployable unit in AgentOS is a "bundle": a Claude-Code-format plugin made
+The deployable unit in Curie is a "bundle": a Claude-Code-format plugin made
 of skills, tools, and MCP servers. Uploading or deploying a bundle is
-equivalent to running arbitrary code. AgentOS treats it that way by design:
+equivalent to running arbitrary code. Curie treats it that way by design:
 
 - Bundle validation does not sandbox inputs at the config layer.
   [`packages/plugin-format/src/plugin_format/validate.py`](packages/plugin-format/src/plugin_format/validate.py)
@@ -20,12 +20,12 @@ equivalent to running arbitrary code. AgentOS treats it that way by design:
   checks that one of the two is present, not what it points at. Model configs
   are `extra="allow"` by mandate.
 - The runner executes the agent with `permission_mode="bypassPermissions"`
-  ([`runner/src/agentos_runner/adapter.py`](runner/src/agentos_runner/adapter.py)).
+  ([`runner/src/curie_runner/adapter.py`](runner/src/curie_runner/adapter.py)).
   There is no in-agent permission gate.
 
 Because a bundle is trusted to run arbitrary code, the security boundary is not
 input validation. It is the Kubernetes sandbox rails shipped as defaults in the
-Helm chart [`charts/agentos`](charts/agentos). See
+Helm chart [`charts/curie`](charts/curie). See
 [ADR-0006](docs/adr/0006-security-rails-as-chart-defaults.md) and
 [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full rationale.
 
@@ -46,7 +46,7 @@ The rails are the actual control. Every agent runs inside them:
 
 **How to confirm the rails hold.** The chart ships a PT-3 security probe as a
 `helm test`
-([`charts/agentos/templates/security-probe.yaml`](charts/agentos/templates/security-probe.yaml))
+([`charts/curie/templates/security-probe.yaml`](charts/curie/templates/security-probe.yaml))
 that asserts all of the above. It includes a before/after control proving the
 CNI actually enforces the egress policy, so a NetworkPolicy-unaware CNI cannot
 silently false-pass. Run it against your cluster to verify enforcement.
@@ -57,7 +57,7 @@ responsibilities (see below).
 
 ### Local mode is not the Kubernetes boundary
 
-The local developer loop (`agentos local up` / `agentos skill up`, the Docker
+The local developer loop (`curie local up` / `curie skill up`, the Docker
 substrate) **accepts TRUSTED bundles only.** It is a convenience for developing
 and demoing your own bundles on a laptop, not a security boundary for running
 untrusted code. The Kubernetes sandbox rails above (gVisor + default-deny
@@ -70,7 +70,7 @@ trusted-but-buggy bundle cannot casually escalate on the host: each runner
 container boots with a **read-only root filesystem** (writable `tmpfs` for `/tmp`
 and `$HOME` only), **all Linux capabilities dropped**, **no-new-privileges**, the
 Docker **default seccomp profile**, and **bounded pids/memory/cpu**, and it joins
-a **dedicated `agentos_runner` network** that carries only its documented
+a **dedicated `curie_runner` network** that carries only its documented
 dependencies (telemetry collector, local model, and the API state endpoint) --
 never the data tier (Postgres/Valkey/MinIO) and never the Docker daemon socket
 (which only the worker holds). These controls reduce blast radius; they are not a
@@ -83,7 +83,7 @@ Reporting**, which is enabled on this repository.
 
 - Go to the repository's **Security** tab and click **Report a vulnerability**,
   or open a private advisory directly at
-  <https://github.com/curie-eng/agentos/security/advisories/new>.
+  <https://github.com/curie-eng/curie/security/advisories/new>.
 - **Do not** open a public issue or pull request for a vulnerability, and please
   do not disclose it publicly until a fix is available.
 
@@ -99,9 +99,9 @@ Private Vulnerability Reporting is the channel.
 
 ## Supported versions
 
-AgentOS is pre-1.0. Only the latest minor release line receives security
+Curie is pre-1.0. Only the latest minor release line receives security
 fixes; older lines are unsupported. See the
-[Releases page](https://github.com/curie-eng/agentos/releases) for the current
+[Releases page](https://github.com/curie-eng/curie/releases) for the current
 version rather than a number pinned here (which only goes stale).
 
 ## Operator responsibilities

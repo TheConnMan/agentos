@@ -5,11 +5,11 @@ Three guards, all checked at import time (no Postgres, no fixtures):
 (a) Every credential-key literal the runner's ``sdk_auth`` owns is caught by
     ``is_reserved_boot_env_name``. If a new model credential is added to
     ``sdk_auth`` but not to ``RESERVED_BOOT_ENV``, this fails -- the exact
-    class of gap #457 closes.  ``AGENTOS_MODEL_BASE_URL`` / ``AGENTOS_CREDENTIALS``
+    class of gap #457 closes.  ``CURIE_MODEL_BASE_URL`` / ``CURIE_CREDENTIALS``
     are already safe via the prefix rule, but the pin asserts them anyway so the
     sdk_auth inventory is covered exhaustively.
 (b) Every boot key a worker-lane producer WRITES is caught. Retargeted in #488
-    from ``agentos_worker.binding``'s ``*_ENV`` literals to
+    from ``curie_worker.binding``'s ``*_ENV`` literals to
     ``aci_protocol.BootEnv``'s declared key list, because #488 moves the
     declaration out of the binding and deletes those constants -- the old guard
     would have gone red (it carries a non-vacuity floor, so it fails loudly
@@ -17,9 +17,9 @@ Three guards, all checked at import time (no Postgres, no fixtures):
     pointed at the real declaration site instead of a dead one.
 (c) Cross-language parity: the Helm ``_helpers.tpl`` reserved list is an
     unavoidable second copy (Helm cannot import Python). Its
-    ``agentos.reservedConnectorSecretNames`` define MUST list exactly the
-    non-``AGENTOS_`` members of ``RESERVED_BOOT_ENV`` (the prefix rule covers
-    ``AGENTOS_*`` on both sides). Fails CI if the two lists drift.
+    ``curie.reservedConnectorSecretNames`` define MUST list exactly the
+    non-``CURIE_`` members of ``RESERVED_BOOT_ENV`` (the prefix rule covers
+    ``CURIE_*`` on both sides). Fails CI if the two lists drift.
 """
 
 from __future__ import annotations
@@ -27,14 +27,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import agentos_runner.sdk_auth as sdk_auth
+import curie_runner.sdk_auth as sdk_auth
 from aci_protocol import BootEnv
 from plugin_format import RESERVED_BOOT_ENV, is_reserved_boot_env_name
 
 # --- (a) sdk_auth credential-key literals ------------------------------------
 
 # An env-var-name string: uppercase alnum, underscore-separated (ANTHROPIC_BASE_URL,
-# AGENTOS_MODEL_BASE_URL, ...). Discriminates a credential-key literal from a base
+# CURIE_MODEL_BASE_URL, ...). Discriminates a credential-key literal from a base
 # URL like "https://openrouter.ai/api" or a tuple constant.
 _ENV_VAR_NAME_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 
@@ -42,10 +42,10 @@ _ENV_VAR_NAME_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 def _sdk_auth_credential_env_literals() -> dict[str, str]:
     """Discover the credential/base-url env-var literals sdk_auth owns.
 
-    Every module-level ``*_ENV`` name in ``agentos_runner.sdk_auth`` whose value
+    Every module-level ``*_ENV`` name in ``curie_runner.sdk_auth`` whose value
     is an env-var-name string. Reading the module: all of them
     (``CLAUDE_CODE_OAUTH_TOKEN``, ``ANTHROPIC_API_KEY``, ``ANTHROPIC_BASE_URL``,
-    ``ANTHROPIC_AUTH_TOKEN``, ``AGENTOS_MODEL_BASE_URL``, ``AGENTOS_CREDENTIALS``)
+    ``ANTHROPIC_AUTH_TOKEN``, ``CURIE_MODEL_BASE_URL``, ``CURIE_CREDENTIALS``)
     are credential/base-url keys that MUST be reserved -- there is no runner-local
     ``*_ENV`` knob here to exclude. The tuple alias ``_SDK_CREDENTIAL_ENV`` is
     skipped by the string check. Dynamic (not a hardcoded list) so a NEW credential
@@ -63,15 +63,15 @@ def _sdk_auth_credential_env_literals() -> dict[str, str]:
 
 def test_every_sdk_auth_credential_key_is_reserved() -> None:
     literals = _sdk_auth_credential_env_literals()
-    # Sanity floor: discovery is not vacuous, and the four non-AGENTOS_ credential
-    # keys plus the AGENTOS_ base-url alias are all present (guards the predicate
+    # Sanity floor: discovery is not vacuous, and the four non-CURIE_ credential
+    # keys plus the CURIE_ base-url alias are all present (guards the predicate
     # silently narrowing and skipping the exact gap #457 closes).
     assert {
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_AUTH_TOKEN",
-        "AGENTOS_MODEL_BASE_URL",
+        "CURIE_MODEL_BASE_URL",
     } <= set(literals.values()), literals
     for attr, value in literals.items():
         assert is_reserved_boot_env_name(value), (
@@ -112,11 +112,11 @@ def test_every_declared_worker_lane_boot_key_is_reserved() -> None:
     # retag emptying the set, making this test pass while covering nothing).
     assert keys, "found no worker-lane boot keys declared on aci_protocol.BootEnv"
     assert {
-        "AGENTOS_BUDGET",
-        "AGENTOS_SESSION_ID",
-        "AGENTOS_RUNNER_TOKEN",
-        "AGENTOS_CREDENTIALS",
-        "AGENTOS_APPROVAL_GRANT_TOOL",
+        "CURIE_BUDGET",
+        "CURIE_SESSION_ID",
+        "CURIE_RUNNER_TOKEN",
+        "CURIE_CREDENTIALS",
+        "CURIE_APPROVAL_GRANT_TOOL",
         # Non-prefixed, so the prefix catch-all does NOT cover it: this key is
         # what makes the guard bite rather than restate the prefix rule. It is
         # reserved only because #457 enumerated it explicitly.
@@ -130,15 +130,15 @@ def test_every_declared_worker_lane_boot_key_is_reserved() -> None:
 
 
 def test_dropping_agent_id_from_the_enumeration_does_not_unreserve_it() -> None:
-    """#488 removed AGENTOS_AGENT_ID from _AGENTOS_BOOT_KEYS; that is a no-op.
+    """#488 removed CURIE_AGENT_ID from _CURIE_BOOT_KEYS; that is a no-op.
 
     The entry was dead enumeration once the write site went away, but the
-    ``AGENTOS_`` prefix catch-all still reserves the name, so no connector secret
+    ``CURIE_`` prefix catch-all still reserves the name, so no connector secret
     can claim it. Asserted so the removal is provably policy-neutral rather than
     a silent narrowing of the reserved set.
     """
-    assert "AGENTOS_AGENT_ID" not in RESERVED_BOOT_ENV
-    assert is_reserved_boot_env_name("AGENTOS_AGENT_ID")
+    assert "CURIE_AGENT_ID" not in RESERVED_BOOT_ENV
+    assert is_reserved_boot_env_name("CURIE_AGENT_ID")
 
 
 # --- (c) Helm cross-language drift gate --------------------------------------
@@ -146,7 +146,7 @@ def test_dropping_agent_id_from_the_enumeration_does_not_unreserve_it() -> None:
 _HELPERS_TPL = (
     Path(__file__).resolve().parents[4]
     / "charts"
-    / "agentos"
+    / "curie"
     / "templates"
     / "_helpers.tpl"
 )
@@ -159,20 +159,20 @@ def _reserved_names_from_helpers() -> set[str]:
     text = _HELPERS_TPL.read_text(encoding="utf-8")
     # Extract the body of the reservedConnectorSecretNames define, tolerantly.
     match = re.search(
-        r'define\s+"agentos\.reservedConnectorSecretNames"\s*(?:-?}})?(?P<body>.*?){{-?\s*end',
+        r'define\s+"curie\.reservedConnectorSecretNames"\s*(?:-?}})?(?P<body>.*?){{-?\s*end',
         text,
         re.DOTALL,
     )
     assert match, (
-        "no `agentos.reservedConnectorSecretNames` define found in "
+        "no `curie.reservedConnectorSecretNames` define found in "
         f"{_HELPERS_TPL} -- the Helm reserved-name drift gate has no source"
     )
     tokens = set(_ENV_NAME_RE.findall(match.group("body")))
-    # The prefix rule covers AGENTOS_* on both sides; only the explicitly
+    # The prefix rule covers CURIE_* on both sides; only the explicitly
     # enumerated credential keys need list-parity.
-    return {t for t in tokens if not t.startswith("AGENTOS_")}
+    return {t for t in tokens if not t.startswith("CURIE_")}
 
 
 def test_helm_reserved_list_matches_non_prefixed_members() -> None:
-    expected = {n for n in RESERVED_BOOT_ENV if not n.startswith("AGENTOS_")}
+    expected = {n for n in RESERVED_BOOT_ENV if not n.startswith("CURIE_")}
     assert _reserved_names_from_helpers() == expected

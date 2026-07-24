@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/status/v1.json",
-  "title": "agentos skill status --json",
-  "description": "The agent-facing payload of `agentos skill status --json`: the runner base URL plus the serialized ACI SessionStatus. The wrapper keys are what the CLI owns and are locked; the inner `session` is a frozen ACI contract elsewhere, so it is left unconstrained here rather than mirrored field-by-field.",
+  "$id": "https://schemas.curietech.ai/cli/status/v1.json",
+  "title": "curie skill status --json",
+  "description": "The agent-facing payload of `curie skill status --json`: the runner base URL plus the serialized ACI SessionStatus. The wrapper keys are what the CLI owns and are locked; the inner `session` is a frozen ACI contract elsewhere, so it is left unconstrained here rather than mirrored field-by-field.",
   "type": "object",
   "additionalProperties": false,
   "required": [

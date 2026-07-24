@@ -20,52 +20,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentos"
-version = "0.4.3"
-dependencies = [
- "agentos-aci-protocol",
- "anstream",
- "anstyle",
- "anstyle-query",
- "anyhow",
- "axum",
- "clap",
- "crossterm",
- "dotenvy",
- "flate2",
- "futures-util",
- "getrandom 0.4.3",
- "indicatif",
- "jsonschema",
- "keyring",
- "proc-macro2",
- "quote",
- "ratatui",
- "redis",
- "regex",
- "reqwest",
- "rpassword",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "syn 3.0.3",
- "tar",
- "tempfile",
- "time",
- "tokio",
- "unicode-width",
- "uuid",
-]
-
-[[package]]
-name = "agentos-aci-protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -710,6 +664,52 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "curie"
+version = "0.4.3"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "anstyle-query",
+ "anyhow",
+ "axum",
+ "clap",
+ "crossterm",
+ "curie-aci-protocol",
+ "dotenvy",
+ "flate2",
+ "futures-util",
+ "getrandom 0.4.3",
+ "indicatif",
+ "jsonschema",
+ "keyring",
+ "proc-macro2",
+ "quote",
+ "ratatui",
+ "redis",
+ "regex",
+ "reqwest",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "syn 3.0.3",
+ "tar",
+ "tempfile",
+ "time",
+ "tokio",
+ "unicode-width",
+ "uuid",
+]
+
+[[package]]
+name = "curie-aci-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

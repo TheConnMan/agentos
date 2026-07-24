@@ -4,7 +4,7 @@ Date: 2026-07-16
 
 Status: Accepted
 
-Implements [#455](https://github.com/curie-eng/agentos/issues/455).
+Implements [#455](https://github.com/curie-eng/curie/issues/455).
 
 ## Context
 
@@ -41,7 +41,7 @@ minor bump to `0.2.0`, not a retro-fitted compatibility claim.
 
 ## Decision
 
-**1. Semver, independent of the AgentOS release, with a written change-class
+**1. Semver, independent of the Curie release, with a written change-class
 table.** The protocol version tracks the wire contract's compatibility, not the
 product's cadence. The bump class for each change:
 

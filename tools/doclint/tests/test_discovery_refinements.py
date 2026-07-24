@@ -149,9 +149,9 @@ def test_real_rotten_citation_still_fails(clean_repo: Path, run_lint: RunLint) -
     write(
         clean_repo,
         "docs/rot.md",
-        "The gate lives in `apps/api/src/agentos_api/ghost.py`.\n",
+        "The gate lives in `apps/api/src/curie_api/ghost.py`.\n",
     )
     code, out = run_lint(clean_repo)
     assert code != 0
-    assert "apps/api/src/agentos_api/ghost.py" in out
+    assert "apps/api/src/curie_api/ghost.py" in out
     assert "does not exist" in out.lower()

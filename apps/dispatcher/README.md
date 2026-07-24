@@ -11,8 +11,8 @@ run orchestration are the worker's job, not the dispatcher's.
 
 ## The queue seam (what the worker consumes)
 
-The dispatcher `XADD`s onto a Valkey Stream (`AGENTOS_STREAM`, default
-`agentos:runs`). Each entry carries one field, `payload`, holding the JSON of a
+The dispatcher `XADD`s onto a Valkey Stream (`CURIE_STREAM`, default
+`curie:runs`). Each entry carries one field, `payload`, holding the JSON of a
 `QueuedTurn` (from `aci_protocol`). Its fields are channel-neutral; the
 parenthetical is what the Slack adapter maps onto each one:
 
@@ -26,7 +26,7 @@ parenthetical is what the Slack adapter maps onto each one:
 | `received_at` | ISO-8601 UTC timestamp the adapter received it |
 
 The worker reconstructs it with `from_stream_fields(fields)`, a module-level
-helper in `agentos_dispatcher.queue`. The model lives in the frozen `aci_protocol`
+helper in `curie_dispatcher.queue`. The model lives in the frozen `aci_protocol`
 package (promoted out of the dispatcher in issue #7) so the producer and the
 Rust/TS consumers share one schema-gated contract instead of a hand-mirrored copy;
 the dispatcher's queue module owns only the Stream transport of it. The
@@ -69,22 +69,22 @@ Read from the environment by `DispatcherConfig()` (a `pydantic_settings.BaseSett
 | `VALKEY_PORT` | `6379` | Valkey port (compose maps it to `26379` on the host) |
 | `VALKEY_PASSWORD` | "" | Valkey password (compose dev: `valkeypass`) |
 | `VALKEY_DB` | `0` | Valkey db index |
-| `AGENTOS_STREAM` | `agentos:runs` | Stream the jobs land on |
-| `AGENTOS_DEDUPE_PREFIX` | `agentos:dedupe:` | dedupe key prefix |
-| `AGENTOS_DEDUPE_TTL_SECONDS` | `3600` | dedupe guard TTL |
-| `AGENTOS_PLACEHOLDER_TEXT` | `On it. Working on your request.` | placeholder reply text |
-| `AGENTOS_BACKOFF_INITIAL_SECONDS` | `1.0` | first reconnect backoff |
-| `AGENTOS_BACKOFF_MAX_SECONDS` | `30.0` | backoff cap |
-| `AGENTOS_BACKOFF_MULTIPLIER` | `2.0` | backoff growth factor |
-| `AGENTOS_API_URL` | `http://localhost:8000` | platform API used to resolve approval clicks (compose: `http://agentos-api:8000`). `AGENTOS_API_BASE_URL` is a deprecated alias. |
-| `AGENTOS_API_KEY` | `agentos-dev-key` | shared API key sent as `X-API-Key` on the resolve call |
-| `AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS` | `30.0` | deadline for the boot gate below; must be positive |
+| `CURIE_STREAM` | `curie:runs` | Stream the jobs land on |
+| `CURIE_DEDUPE_PREFIX` | `curie:dedupe:` | dedupe key prefix |
+| `CURIE_DEDUPE_TTL_SECONDS` | `3600` | dedupe guard TTL |
+| `CURIE_PLACEHOLDER_TEXT` | `On it. Working on your request.` | placeholder reply text |
+| `CURIE_BACKOFF_INITIAL_SECONDS` | `1.0` | first reconnect backoff |
+| `CURIE_BACKOFF_MAX_SECONDS` | `30.0` | backoff cap |
+| `CURIE_BACKOFF_MULTIPLIER` | `2.0` | backoff growth factor |
+| `CURIE_API_URL` | `http://localhost:8000` | platform API used to resolve approval clicks (compose: `http://curie-api:8000`). `CURIE_API_BASE_URL` is a deprecated alias. |
+| `CURIE_API_KEY` | `curie-dev-key` | shared API key sent as `X-API-Key` on the resolve call |
+| `CURIE_API_PREFLIGHT_TIMEOUT_SECONDS` | `30.0` | deadline for the boot gate below; must be positive |
 
 ### Boot gate on the platform API
 
-Before any Slack wiring, `main()` polls `GET {AGENTOS_API_URL}/health` until
-it answers 200 or `AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS` elapses, reusing the
-`AGENTOS_BACKOFF_*` tunables for the poll interval. On success it logs the
+Before any Slack wiring, `main()` polls `GET {CURIE_API_URL}/health` until
+it answers 200 or `CURIE_API_PREFLIGHT_TIMEOUT_SECONDS` elapses, reusing the
+`CURIE_BACKOFF_*` tunables for the poll interval. On success it logs the
 resolved URL once at INFO. On the deadline it logs an error naming that URL and
 the time actually spent, and
 exits non-zero, so a misconfigured base URL is dead on arrival instead of
@@ -99,7 +99,7 @@ resolve call degrades per-call on its own). There is no off switch: the gate is
 the point, so a non-positive timeout is rejected as a config error at boot.
 
 **Known limit: the gate proves reachability, not credentials.** `/health` is
-unauthenticated, so a wrong `AGENTOS_API_KEY` still passes the gate and fails at
+unauthenticated, so a wrong `CURIE_API_KEY` still passes the gate and fails at
 click time. This check catches the base-URL class of misconfiguration only.
 
 The two Slack tokens are the only secrets. When a workspace exists they come from
@@ -110,7 +110,7 @@ in the chart). Nothing else is secret.
 ## Run it
 
 ```bash
-python -m agentos_dispatcher
+python -m curie_dispatcher
 ```
 
 ## Runbook: point it at a real Slack workspace (once one exists)
@@ -123,9 +123,9 @@ python -m agentos_dispatcher
 2. Generate an App-Level Token with `connections:write` -> `SLACK_APP_TOKEN`
    (`xapp-...`); copy the Bot User OAuth Token -> `SLACK_BOT_TOKEN` (`xoxb-...`).
 3. Set both env vars (plus `VALKEY_*` for the target Valkey) and run
-   `python -m agentos_dispatcher`. @-mention the bot in a channel it is in, or DM
+   `python -m curie_dispatcher`. @-mention the bot in a channel it is in, or DM
    it: you should see the placeholder reply appear and one entry land on the
-   Stream (`XLEN agentos:runs`). The worker consumes from there.
+   Stream (`XLEN curie:runs`). The worker consumes from there.
 
 ## Verification (Slack-free)
 

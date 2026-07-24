@@ -1,7 +1,7 @@
-"""The soak and chaos scenario against a standing agentos cluster.
+"""The soak and chaos scenario against a standing curie cluster.
 
-Gated behind ``AGENTOS_SOAK=1`` (plus a reachable cluster and the dev-stack
-Valkey). Parametrized over ``range(runs)`` so ``AGENTOS_SOAK_RUNS=3`` runs the
+Gated behind ``CURIE_SOAK=1`` (plus a reachable cluster and the dev-stack
+Valkey). Parametrized over ``range(runs)`` so ``CURIE_SOAK_RUNS=3`` runs the
 whole scenario three consecutive times in one invocation, matching the
 definition-of-done "must pass three consecutive runs".
 
@@ -52,12 +52,12 @@ from harness import (
 )
 
 pytestmark = pytest.mark.skipif(
-    os.environ.get("AGENTOS_SOAK") != "1",
-    reason="soak/chaos suite; set AGENTOS_SOAK=1 with a standing cluster + dev stack",
+    os.environ.get("CURIE_SOAK") != "1",
+    reason="soak/chaos suite; set CURIE_SOAK=1 with a standing cluster + dev stack",
 )
 
-# Evaluated at import so the parametrization reflects AGENTOS_SOAK_RUNS. When the
-# suite is skipped (AGENTOS_SOAK unset) this still yields a single skipped param.
+# Evaluated at import so the parametrization reflects CURIE_SOAK_RUNS. When the
+# suite is skipped (CURIE_SOAK unset) this still yields a single skipped param.
 _RUNS = SoakConfig.from_env().runs
 
 
@@ -96,7 +96,7 @@ def _wait_pod_gone(cfg: SoakConfig, sandbox_name: str, timeout: float = 90.0) ->
 
 @pytest.mark.parametrize("run", range(_RUNS))
 def test_soak_resilience(run: int, substrate: object, cfg: SoakConfig, pool_ready: None) -> None:
-    from agentos_worker.sandbox import HISTORY_ENV, SandboxHandle, SandboxSubstrate
+    from curie_worker.sandbox import HISTORY_ENV, SandboxHandle, SandboxSubstrate
 
     assert isinstance(substrate, SandboxSubstrate)
     print(f"\nEVIDENCE soak_run={run} concurrency={cfg.concurrency} batch={cfg.batch}")
@@ -155,7 +155,7 @@ def test_soak_resilience(run: int, substrate: object, cfg: SoakConfig, pool_read
         # -- Phase B: mid-thread batch burst under sustained hold -------------
         # "batch job" is interpreted as a burst of concurrent threads launched
         # while the Phase-A threads are still held claimed. (An alternative
-        # reading, an eval fan-out XADD to agentos:evals, is a separate consumer
+        # reading, an eval fan-out XADD to curie:evals, is a separate consumer
         # group not exercised by the sandbox substrate; see the README.)
         def _batch_turn(key: str) -> tuple[str, list[dict[str, object]]]:
             handle = substrate.claim(key)
@@ -287,7 +287,7 @@ def test_soak_resilience(run: int, substrate: object, cfg: SoakConfig, pool_read
     strict=False,
     reason=(
         "otel.py does not export cache_read_input_tokens; "
-        "see runner/src/agentos_runner/otel.py -- tracked follow-up"
+        "see runner/src/curie_runner/otel.py -- tracked follow-up"
     ),
 )
 @pytest.mark.skipif(
@@ -304,8 +304,8 @@ def test_cache_read_tokens_probe(cfg: SoakConfig) -> None:
     """
 
     host = os.environ.get("LANGFUSE_HOST", "http://localhost:23000")
-    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "pk-lf-agentos-dev")
-    secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "sk-lf-agentos-dev")
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "pk-lf-curie-dev")
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "sk-lf-curie-dev")
 
     import base64
 

@@ -12,10 +12,10 @@ from collections.abc import Callable
 
 import redis.exceptions
 from aci_protocol import Final, QueuedTurn, ReplyHandle, SessionStatus, TextDelta
-from agentos_dispatcher.queue import to_stream_fields
-from agentos_worker import consumer as consumer_module
-from agentos_worker import kernel as kernel_module
-from agentos_worker.consumer import (
+from curie_dispatcher.queue import to_stream_fields
+from curie_worker import consumer as consumer_module
+from curie_worker import kernel as kernel_module
+from curie_worker.consumer import (
     THREAD_RESET_INFLIGHT_SET,
     THREAD_RESET_SET,
     Consumer,
@@ -184,7 +184,7 @@ def test_read_loop_survives_transient_redis_timeout(make_harness, caplog) -> Non
             qe = _qevent("hello", thread="tt1", event_id="t1")
             await h.async_redis.xadd(h.config.stream, to_stream_fields(qe))
 
-            with caplog.at_level(logging.DEBUG, logger="agentos_worker.consumer"):
+            with caplog.at_level(logging.DEBUG, logger="curie_worker.consumer"):
                 task = asyncio.create_task(consumer.run())
                 await _wait_until(lambda: h.sink.last_text == "answer")
                 consumer.request_stop()
@@ -193,7 +193,7 @@ def test_read_loop_survives_transient_redis_timeout(make_harness, caplog) -> Non
             assert calls["n"] >= 3  # it retried after both injected faults
             assert h.runner.opened == ["hello"]
 
-            recs = [r for r in caplog.records if r.name == "agentos_worker.consumer"]
+            recs = [r for r in caplog.records if r.name == "curie_worker.consumer"]
             timeout_recs = [r for r in recs if "simulated blocking-read timeout" in r.getMessage()]
             conn_recs = [r for r in recs if "simulated connection blip" in r.getMessage()]
             assert timeout_recs and all(r.levelno == logging.DEBUG for r in timeout_recs)

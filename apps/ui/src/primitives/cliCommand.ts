@@ -1,7 +1,7 @@
 // cliCommand: a resolver that turns an action id + live context into the exact
-// `agentos ...` command string a CliHint should copy. It is typed *against the
+// `curie ...` command string a CliHint should copy. It is typed *against the
 // CLI's own command manifest* (`cli/command-manifest.json`, emitted by
-// `agentos schema`), imported at build time. Because the action ids and the
+// `curie schema`), imported at build time. Because the action ids and the
 // per-action flag keys are derived from the manifest's literal types, a command
 // or flag that is renamed or removed in the CLI breaks `pnpm typecheck` here --
 // the console/CLI parity drift is loud, not silent (issue #278, epic #145).
@@ -109,7 +109,7 @@ function nodeAt(path: string[]): ManifestNode {
 }
 
 /**
- * Resolve an action id + context into the exact `agentos ...` command string.
+ * Resolve an action id + context into the exact `curie ...` command string.
  *
  * Positionals are emitted in manifest (clap) order; flags follow, `--long`
  * form, quoted when the value contains whitespace. A context key that is not a
@@ -135,7 +135,7 @@ export function cliCommand<A extends ActionId>(
       args.find((a) => !a.positional && a.long === key);
     if (!arg) {
       throw new Error(
-        `cliCommand: "${key}" is not an argument of "agentos ${path.join(" ")}"`,
+        `cliCommand: "${key}" is not an argument of "curie ${path.join(" ")}"`,
       );
     }
     if (arg.positional) {
@@ -147,7 +147,7 @@ export function cliCommand<A extends ActionId>(
     }
   }
 
-  return ["agentos", ...path, ...positionals, ...flags].join(" ");
+  return ["curie", ...path, ...positionals, ...flags].join(" ");
 }
 
 // Shell-quote a value only when it carries whitespace, so simple ids/flags stay

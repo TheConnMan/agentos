@@ -7,8 +7,8 @@
 
 mod support;
 
-use agentos::api::{ApiClient, BudgetConfig};
-use agentos::commands::{self, AgentActionOpts};
+use curie::api::{ApiClient, BudgetConfig};
+use curie::commands::{self, AgentActionOpts};
 use support::{serve, Response};
 
 const AGENT_ID: &str = "11111111-1111-1111-1111-111111111111";

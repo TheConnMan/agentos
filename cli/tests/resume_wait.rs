@@ -6,16 +6,16 @@
 //! drives the seam the way it actually runs. No compose stack is needed -- only a
 //! reachable Valkey (the compose dev one on host port 26379 is fine) and the
 //! in-process stub. The test uses a unique test-scoped stream it deletes
-//! afterward, so it never touches the real `agentos:runs` stream. When no Valkey
+//! afterward, so it never touches the real `curie:runs` stream. When no Valkey
 //! is reachable it SKIPS (like `chat_enqueue.rs`), so CI without the stack is
 //! unaffected; run it locally with the compose Valkey up, or point
 //! `TEST_VALKEY_URL` at another instance.
 
 use std::time::Duration;
 
-use agentos::chat::{await_reply, await_resume, parse_approval_id, Outcome, SlackStub};
-use agentos::queue::{synthetic_turn, xadd, WORKER_GROUP};
-use agentos_aci_protocol::{QueuedTurn, ReplyHandle};
+use curie::chat::{await_reply, await_resume, parse_approval_id, Outcome, SlackStub};
+use curie::queue::{synthetic_turn, xadd, WORKER_GROUP};
+use curie_aci_protocol::{QueuedTurn, ReplyHandle};
 
 mod support;
 use support::{unique_stream, valkey_or_skip};
@@ -29,7 +29,7 @@ fn resume_turn(resume_event_id: &str, endpoint: &str) -> QueuedTurn {
     QueuedTurn {
         event_id: resume_event_id.to_string(),
         conversation_id: "1720000000.000100".into(),
-        author: "U-agentos-message".into(),
+        author: "U-curie-message".into(),
         text: "(resumed after approval)".into(),
         reply_handle: ReplyHandle {
             channel: "C-SIM-x".into(),
@@ -93,7 +93,7 @@ async fn await_resume_returns_the_finalized_reply_once_the_resume_entry_is_acked
     else {
         return;
     };
-    let stream = unique_stream("agentos:test:resume:");
+    let stream = unique_stream("curie:test:resume:");
 
     // Stand up the reply stub (the surface the resumed turn's chat.update lands on).
     let mut stub = SlackStub::start("localhost", 0, "localhost").await.unwrap();
@@ -102,7 +102,7 @@ async fn await_resume_returns_the_finalized_reply_once_the_resume_entry_is_acked
     // The CLI's OWN original turn: its stream id is the exclusive scan cursor.
     let original = synthetic_turn(
         "C-SIM-x",
-        "U-agentos-message",
+        "U-curie-message",
         "do the risky thing",
         "1720000000.000100",
         PLACEHOLDER_TS,
@@ -173,7 +173,7 @@ async fn await_resume_times_out_when_the_approval_is_never_resolved() {
     else {
         return;
     };
-    let stream = unique_stream("agentos:test:resume:");
+    let stream = unique_stream("curie:test:resume:");
 
     let mut stub = SlackStub::start("localhost", 0, "localhost").await.unwrap();
     let endpoint = stub.base_api_url().to_string();
@@ -182,7 +182,7 @@ async fn await_resume_times_out_when_the_approval_is_never_resolved() {
     // entry is ever appended.
     let original = synthetic_turn(
         "C-SIM-x",
-        "U-agentos-message",
+        "U-curie-message",
         "do the risky thing",
         "1720000000.000100",
         PLACEHOLDER_TS,
@@ -253,14 +253,14 @@ async fn a_notice_without_a_card_parks_the_turn_and_the_keepalive_delivers_the_r
     else {
         return;
     };
-    let stream = unique_stream("agentos:test:resume:");
+    let stream = unique_stream("curie:test:resume:");
 
     let mut stub = SlackStub::start("localhost", 0, "localhost").await.unwrap();
     let endpoint = stub.base_api_url().to_string();
 
     let original = synthetic_turn(
         "C-SIM-x",
-        "U-agentos-message",
+        "U-curie-message",
         "do the risky thing",
         "1720000000.000100",
         PLACEHOLDER_TS,
@@ -358,14 +358,14 @@ async fn a_blank_line_summary_notice_parks_the_turn_and_the_keepalive_delivers_t
     else {
         return;
     };
-    let stream = unique_stream("agentos:test:resume:");
+    let stream = unique_stream("curie:test:resume:");
 
     let mut stub = SlackStub::start("localhost", 0, "localhost").await.unwrap();
     let endpoint = stub.base_api_url().to_string();
 
     let original = synthetic_turn(
         "C-SIM-x",
-        "U-agentos-message",
+        "U-curie-message",
         "do the risky thing",
         "1720000000.000100",
         PLACEHOLDER_TS,

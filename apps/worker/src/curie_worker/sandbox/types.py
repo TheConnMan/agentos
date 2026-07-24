@@ -1,0 +1,199 @@
+"""Sandbox substrate types: the claim handle, route record, config, and errors.
+
+The substrate is the G1 seam between the worker kernel (F1) and the
+kubernetes-sigs/agent-sandbox runtime. F1 talks in ``thread_key`` (the Slack
+``thread_ts``, or any stable per-conversation key) and receives a
+``SandboxHandle`` naming the claimed sandbox and its dial target. Everything
+Kubernetes-shaped stays behind this module.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import asdict, dataclass
+from enum import StrEnum
+from typing import Literal, Protocol
+
+# Substrate-neutral labels: every backend tags its managed objects with these
+# (the Kubernetes adapter on claims, the Docker adapter on containers), so they
+# live here rather than in either concrete adapter.
+MANAGED_BY_LABEL = "curietech.ai/managed-by"
+MANAGED_BY_VALUE = "curie-sandbox-substrate"
+THREAD_HASH_LABEL = "curietech.ai/thread-hash"
+
+
+class RouteState(StrEnum):
+    """Lifecycle state of a thread route recorded in the affinity store."""
+
+    LIVE = "live"
+    SUSPENDED = "suspended"
+
+
+@dataclass(frozen=True)
+class SandboxHandle:
+    """A claimed sandbox bound to a thread: identity plus the ACI dial target.
+
+    ``base_url`` is only resolvable from inside the cluster (the FQDN is a
+    headless-Service DNS name); out-of-cluster callers (tests) reach the runner
+    via a port-forward instead.
+    """
+
+    thread_key: str
+    claim_name: str
+    sandbox_name: str
+    namespace: str
+    service_fqdn: str
+    port: int
+    session_id: str
+    history_ref: str | None = None
+    # Per-claim bearer token the runner enforces on its ACI POST routes (issue
+    # #63). Defaulted so RouteRecord.from_json rehydrates legacy Valkey records
+    # (written before the token existed) with token == "" -- no header is sent
+    # for those and the pre-token runner enforces nothing, so they keep working.
+    token: str = ""
+
+    @property
+    def sandbox_id(self) -> str:
+        """The stable sandbox identity (the Sandbox resource name)."""
+
+        return self.sandbox_name
+
+    @property
+    def base_url(self) -> str:
+        return f"http://{self.service_fqdn}:{self.port}"
+
+
+@dataclass
+class RouteRecord:
+    """The affinity-store value for one thread: handle fields plus route state."""
+
+    handle: SandboxHandle
+    state: RouteState = RouteState.LIVE
+
+    def to_json(self) -> str:
+        payload = asdict(self.handle)
+        payload["state"] = self.state.value
+        return json.dumps(payload, sort_keys=True)
+
+    @classmethod
+    def from_json(cls, raw: str) -> RouteRecord:
+        payload = json.loads(raw)
+        state = RouteState(payload.pop("state", RouteState.LIVE.value))
+        return cls(handle=SandboxHandle(**payload), state=state)
+
+
+@dataclass(frozen=True)
+class SubstrateConfig:
+    """Tunables for the substrate; defaults match the dev chart profile."""
+
+    namespace: str
+    warm_pool: str
+    runner_port: int = 8080
+    # How long a live route stays bound with no touch. After expiry the claim
+    # is an orphan and reap_orphans() deletes it.
+    route_ttl_seconds: int = 3600
+    # Suspended routes wait longer: the thread may come back tomorrow.
+    suspended_route_ttl_seconds: int = 86400
+    # How long claim() waits for a claim to bind a ready sandbox before raising
+    # ClaimTimeoutError. This is a genuinely END-TO-END budget: a single shared
+    # deadline in SandboxSubstrate._claim_fresh spans BOTH the bind phase and the
+    # serviceFQDN phase, not one budget per phase, so the worst case is the
+    # configured value once rather than twice. A cold create (pod scheduling +
+    # bundle-fetch/extract init containers + runner boot + readiness) is ~30s on a
+    # small node and can run longer under load, so the default is 90s. This is the
+    # dominant term in the kernel's per-thread critical section: it MUST stay below
+    # the lock TTL (WorkerConfig.lock_ttl_ms, 120s) so the lock never lapses
+    # mid-claim and lets a second worker open a concurrent turn. Overridable via
+    # CURIE_CLAIM_TIMEOUT_SECONDS; keep any override under the lock TTL too.
+    claim_timeout_seconds: float = 90.0
+    poll_interval_seconds: float = 0.05
+    key_prefix: str = "curie:sandbox"
+    claim_prefix: str = "curie-thread"
+
+    def claim_name_for(self, thread_key: str, nonce: str) -> str:
+        """A DNS-safe, per-generation claim name for a thread.
+
+        The thread hash keeps names stable-per-thread for observability; the
+        nonce distinguishes generations (a resume creates a new claim for the
+        same thread).
+        """
+
+        digest = hashlib.sha256(thread_key.encode("utf-8")).hexdigest()[:10]
+        return f"{self.claim_prefix}-{digest}-{nonce}"
+
+
+@dataclass(frozen=True)
+class ClaimView:
+    """What the substrate needs to know about a SandboxClaim."""
+
+    name: str
+    ready: bool
+    sandbox_name: str | None
+
+
+@dataclass(frozen=True)
+class SandboxView:
+    """What the substrate needs to know about a Sandbox.
+
+    ``port`` is the dial port when it is sandbox-specific (the Docker substrate
+    publishes each runner on its own loopback host port); ``None`` means the
+    substrate falls back to the fleet-wide ``SubstrateConfig.runner_port`` (the
+    Kubernetes path, where every sandbox listens on the same in-cluster port).
+    """
+
+    name: str
+    ready: bool
+    service_fqdn: str | None
+    operating_mode: str
+    port: int | None = None
+
+
+OperatingMode = Literal["Running", "Suspended"]
+
+
+class SandboxClient(Protocol):
+    """What the substrate needs from the cluster, and nothing more.
+
+    The port lives here in the substrate-neutral types module, NOT in a concrete
+    adapter (#543): it is the seam every backend implements (Kubernetes, Docker),
+    and declaring it inside the k8s adapter read as "the port is a Kubernetes
+    thing" -- the opposite of the swap-readiness the seam exists to provide.
+    """
+
+    def create_claim(
+        self,
+        name: str,
+        *,
+        pool: str,
+        env: dict[str, str] | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> None: ...
+
+    def get_claim(self, name: str) -> ClaimView | None: ...
+
+    def delete_claim(self, name: str) -> None: ...
+
+    def list_claims(self, *, label_selector: str) -> list[ClaimView]: ...
+
+    def get_sandbox(self, name: str) -> SandboxView | None: ...
+
+    def set_sandbox_mode(self, name: str, mode: OperatingMode) -> None: ...
+
+
+class SandboxError(Exception):
+    """Base error for the sandbox substrate."""
+
+
+class ClaimTimeoutError(SandboxError):
+    """The claim did not bind a ready sandbox within the configured timeout."""
+
+
+class NoRouteError(SandboxError):
+    """An operation needed an existing thread route and none was found."""
+
+
+class SuspendedThreadError(SandboxError):
+    """claim() was called on a suspended thread; the kernel must resume()
+    explicitly so the stored history is carried into the replacement runner
+    instead of silently forking a fresh, history-less session."""

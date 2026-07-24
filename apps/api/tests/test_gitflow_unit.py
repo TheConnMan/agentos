@@ -6,14 +6,14 @@ import subprocess
 from unittest import mock
 
 import pytest
-from agentos_api.config import Settings
-from agentos_api.gitflow import (
+from curie_api.config import Settings
+from curie_api.gitflow import (
     GitFlowError,
     clone_and_archive,
     environment_for_ref,
     verify_signature,
 )
-from agentos_api.models import Environment
+from curie_api.models import Environment
 
 SECRET = "top-secret"
 _VALID_SHA1 = "a" * 40
@@ -89,7 +89,7 @@ def test_clone_and_archive_rejects_invalid_sha_before_any_subprocess(
     # An invalid ref must be refused by the format gate BEFORE git ever runs, so
     # a leading-dash sha can never reach `git archive` as an injected option.
     settings = Settings()
-    with mock.patch("agentos_api.gitflow.subprocess.run") as run:
+    with mock.patch("curie_api.gitflow.subprocess.run") as run:
         with pytest.raises(GitFlowError):
             clone_and_archive(_ALLOWED_URL, bad_sha, settings)
     run.assert_not_called()
@@ -107,7 +107,7 @@ def test_clone_and_archive_accepts_valid_hex_and_inserts_dash_dash(
     # `git archive` argv must place a `--` separator immediately before the sha
     # so a value can never be parsed as a git option.
     settings = Settings()
-    with mock.patch("agentos_api.gitflow.subprocess.run") as run:
+    with mock.patch("curie_api.gitflow.subprocess.run") as run:
         run.return_value = _completed(b"tar-bytes")
         result = clone_and_archive(_ALLOWED_URL, good_sha, settings)
 

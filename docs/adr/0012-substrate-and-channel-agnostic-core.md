@@ -23,17 +23,17 @@ The worker never learns its substrate and the runner never learns its channel.
 Two seams enforce this, both real code, not aspiration:
 
 - **Substrate seam.** The worker talks only to a `SandboxClient` Protocol
-  ([`apps/worker/src/agentos_worker/sandbox/k8s.py:50`](../../apps/worker/src/agentos_worker/sandbox/k8s.py)).
+  ([`apps/worker/src/curie_worker/sandbox/k8s.py:50`](../../apps/worker/src/curie_worker/sandbox/k8s.py)).
   `KubernetesSandboxClient` (`k8s.py:101`) drives the agent-sandbox controller;
   `DockerSandboxClient`
-  ([`sandbox/docker.py:93`](../../apps/worker/src/agentos_worker/sandbox/docker.py))
+  ([`sandbox/docker.py:93`](../../apps/worker/src/curie_worker/sandbox/docker.py))
   runs the identical runner image as a local container. Everything above the
   protocol is byte-identical across modes.
 - **Channel seam.** The worker reaches Slack only through a base URL
   (`SLACK_API_BASE_URL`,
-  [`config.py:146`](../../apps/worker/src/agentos_worker/config.py)). The CLI
+  [`config.py:146`](../../apps/worker/src/curie_worker/config.py)). The CLI
   stands up a local Slack Web API stub and mints the exact `QueuedSlackEvent`
-  wire payload onto the same `agentos:runs` stream
+  wire payload onto the same `curie:runs` stream
   ([`cli/src/chat.rs:269`](../../cli/src/chat.rs)); the worker cannot tell the
   stub from Slack.
 
@@ -63,7 +63,7 @@ seam.
 - Local middle mode and CLI-driven E2E are first-class verification surfaces, not
   toys: the code they exercise is the code that runs in production.
 - Whether the substrate seam is a genuine swap axis or core-with-fallback is still
-  open (see [issue #86](https://github.com/curie-eng/agentos/issues/86)); this ADR
+  open (see [issue #86](https://github.com/curie-eng/curie/issues/86)); this ADR
   fixes the invariant (the core is blind to the substrate), not the number of
   substrates we will ever ship.
 - This is the concrete instance of the swappable-jobs discipline recorded in

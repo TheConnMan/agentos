@@ -7,7 +7,7 @@
 //! rather than defaulting to a dev placeholder; an explicit key wins.
 //!
 //! These tests pin two pure builders the implementer will add to
-//! `cli/src/commands.rs` (imported here from the `agentos` lib):
+//! `cli/src/commands.rs` (imported here from the `curie` lib):
 //!
 //!   pub fn deploy_port_forward(
 //!       api_url: Option<&str>,
@@ -23,17 +23,15 @@
 //! isolated to this file because it imports from the lib rather than adding
 //! inline lib tests.
 
-use agentos::api::is_insecure_endpoint;
-use agentos::commands::{
-    deploy_needs_key_discovery, deploy_port_forward, normalize_deploy_api_key,
-};
+use curie::api::is_insecure_endpoint;
+use curie::commands::{deploy_needs_key_discovery, deploy_port_forward, normalize_deploy_api_key};
 
 /// (1) Auto path (no `--api-url`) builds a kubectl port-forward to the api
 /// service: a loopback tunnel is the whole point of Option C, so the discovered
 /// strong key never travels over the cleartext NodePort proxy.
 #[test]
 fn auto_path_builds_port_forward_to_api_service() {
-    let cmd = deploy_port_forward(None, "agentos", "agentos", 18000, 8000)
+    let cmd = deploy_port_forward(None, "curie", "curie", 18000, 8000)
         .expect("the auto path (no --api-url) must build a port-forward tunnel");
 
     assert_eq!(cmd.program, "kubectl");
@@ -43,7 +41,7 @@ fn auto_path_builds_port_forward_to_api_service() {
         "expected a port-forward subcommand, got argv {argv:?}"
     );
     assert!(
-        argv.iter().any(|a| a == "svc/agentos-api"),
+        argv.iter().any(|a| a == "svc/curie-api"),
         "expected the tunnel to target the api service, got argv {argv:?}"
     );
     assert!(
@@ -58,8 +56,8 @@ fn auto_path_builds_port_forward_to_api_service() {
 fn explicit_api_url_builds_no_port_forward() {
     let cmd = deploy_port_forward(
         Some("http://example:9000/api"),
-        "agentos",
-        "agentos",
+        "curie",
+        "curie",
         18000,
         8000,
     );
@@ -97,7 +95,7 @@ fn discovered_key_cleartext_refusal_and_no_credential_argv() {
     );
 
     // (b) The port-forward command line carries no credential-shaped argument.
-    let cmd = deploy_port_forward(None, "agentos", "agentos", 18000, 8000)
+    let cmd = deploy_port_forward(None, "curie", "curie", 18000, 8000)
         .expect("the auto path must build a port-forward tunnel");
     for token in cmd.argv() {
         let lower = token.to_ascii_lowercase();

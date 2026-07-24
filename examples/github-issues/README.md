@@ -6,7 +6,7 @@ agent's tools come from a server we do **not** write — the off-the-shelf
 stdio server — and reaching the service needs a **secret** (a GitHub personal
 access token). It exists to prove the end-to-end path for *any* authed MCP
 integration: declare the server in `.mcp.json`, and forward its credential into
-the sandbox at launch with `agentos skill up --secret <NAME>`.
+the sandbox at launch with `curie skill up --secret <NAME>`.
 
 ## What's here
 
@@ -26,7 +26,7 @@ the bundle; it is forwarded by name at launch (below).
 
 ## How the secret reaches the server
 
-`agentos skill up --secret GITHUB_PERSONAL_ACCESS_TOKEN` forwards the variable
+`curie skill up --secret GITHUB_PERSONAL_ACCESS_TOKEN` forwards the variable
 **by name** into the runner container — docker reads its value from your
 environment, so the token never appears in argv. Inside the sandbox the GitHub
 server reads `GITHUB_PERSONAL_ACCESS_TOKEN` from the environment (the `.mcp.json`
@@ -36,11 +36,11 @@ own MCP secrets.
 
 ## Run it end-to-end (manual)
 
-For the interactive path, run `agentos`, choose **Explore examples**, then
-**GitHub issues**. AgentOS starts the runner, keeps the entire conversation in
+For the interactive path, run `curie`, choose **Explore examples**, then
+**GitHub issues**. Curie starts the runner, keeps the entire conversation in
 its TUI, and stops the runner when you leave the chat.
 
-Prerequisites: the runner image built once (`agentos build`), a model credential
+Prerequisites: the runner image built once (`curie build`), a model credential
 in your environment (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`), and a
 GitHub PAT — a read-scoped (`public_repo` / `repo:read`) token is enough to list
 and read issues.
@@ -55,15 +55,15 @@ cd examples/github-issues
 # check prints an explicit `authed server ... not exercised offline` advisory:
 # a green proves only the wiring, not the token, and a red may mean just a
 # missing credential -- `skill up` below is the real end-to-end test.
-agentos skill check
+curie skill check
 
 # Boot the runner with the model credential AND the GitHub token forwarded.
-agentos skill up --secret GITHUB_PERSONAL_ACCESS_TOKEN
+curie skill up --secret GITHUB_PERSONAL_ACCESS_TOKEN
 
 # Ask it something that exercises the authed server.
-agentos skill message "List the open issues in curie-eng/agentos and group them by label."
+curie skill message "List the open issues in curie-eng/curie and group them by label."
 
-agentos skill down
+curie skill down
 ```
 
 If the message reply cites real issue titles/numbers from the repo, the authed
@@ -76,7 +76,7 @@ called → answer grounded in live data.
 up (`skill up --secret ...`), run:
 
 ```bash
-agentos skill eval
+curie skill eval
 ```
 
 The cases are written to be **falsifiable** (a broken agent fails them) and
@@ -119,7 +119,7 @@ Wrong:   mcp__github__create_issue
 
 The wrong (bare) form does NOT match and does NOT gate the call.
 
-Confirm the exact live name before arming the gate: `agentos skill check`
+Confirm the exact live name before arming the gate: `curie skill check`
 prints a `match: github -> plugin:github-issues:github` line, which rewrites to
 the correct prefix above; or read the name directly from a tool-call trace.
 

@@ -849,7 +849,7 @@
         "type": "object"
       },
       "BudgetConfig": {
-        "description": "Per-agent budget (L1). Field names match the ACI AGENTOS_BUDGET so the\nworker passes them straight through; null means platform defaults.",
+        "description": "Per-agent budget (L1). Field names match the ACI CURIE_BUDGET so the\nworker passes them straight through; null means platform defaults.",
         "properties": {
           "max_output_tokens_per_run": {
             "anyOf": [
@@ -1627,7 +1627,7 @@
         "type": "object"
       },
       "LoadPackConfig": {
-        "description": "Rotating \"working...\" load lines for one agent. Mirrors the worker's\nagentos_worker.behaviorpacks.LoadPack (packs ride on agent config, not the\nfrozen ACI contract, so the shape is duplicated across the layers the way\nBudgetConfig mirrors the ACI Budget).",
+        "description": "Rotating \"working...\" load lines for one agent. Mirrors the worker's\ncurie_worker.behaviorpacks.LoadPack (packs ride on agent config, not the\nfrozen ACI contract, so the shape is duplicated across the layers the way\nBudgetConfig mirrors the ACI Budget).",
         "properties": {
           "enabled": {
             "default": false,
@@ -2514,7 +2514,7 @@
     }
   },
   "info": {
-    "title": "AgentOS API",
+    "title": "Curie API",
     "version": "0.1.0"
   },
   "openapi": "3.1.0",

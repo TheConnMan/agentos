@@ -45,7 +45,7 @@ printf '%s\n' \
 ```
 
 You will see three JSON-RPC responses: the handshake, the tool catalog, and
-`3` (the word count). Under a real agent, `agentos skill up` spawns the same
+`3` (the word count). Under a real agent, `curie skill up` spawns the same
 server from the `.mcp.json` declaration and the `text-stats` skill calls its
 tools.
 

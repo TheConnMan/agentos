@@ -17,16 +17,16 @@ import asyncio
 from typing import Any
 
 import httpx
-from agentos_api.approvers import ApproverSet, ExplicitUsers, MembershipVerdict
-from agentos_api.authorizer import AuthzDecision, authorize_approval
-from agentos_api.models import Approval
-from agentos_api.slack_approvers import (
+from curie_api.approvers import ApproverSet, ExplicitUsers, MembershipVerdict
+from curie_api.authorizer import AuthzDecision, authorize_approval
+from curie_api.models import Approval
+from curie_api.slack_approvers import (
     SlackApproverSetSelector,
     SlackChannelMembers,
     SlackUserGroupMembers,
 )
-from agentos_api.slack_usergroups import SlackUserGroupClient
-from agentos_api.usergroups import GroupMembershipSource
+from curie_api.slack_usergroups import SlackUserGroupClient
+from curie_api.usergroups import GroupMembershipSource
 
 
 def _approval(*, author: str = "U_AE", channel: str = "C_MGRS") -> Approval:

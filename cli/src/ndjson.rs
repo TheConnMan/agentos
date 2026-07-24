@@ -5,8 +5,8 @@
 //! reassembles lines across arbitrary chunk boundaries; parsing delegates to the
 //! generated crate, whose deserializer enforces the protocol version.
 
-use agentos_aci_protocol::OutboundEvent;
 use anyhow::{Context, Result};
+use curie_aci_protocol::OutboundEvent;
 
 /// Reassembles complete lines from a chunked byte stream.
 #[derive(Default)]
@@ -51,7 +51,7 @@ pub fn parse_outbound(line: &str) -> Result<OutboundEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentos_aci_protocol::{SessionStatus, PROTOCOL_VERSION};
+    use curie_aci_protocol::{SessionStatus, PROTOCOL_VERSION};
 
     #[test]
     fn splits_lines_across_chunk_boundaries() {

@@ -55,7 +55,7 @@ async function stubBackend(page: Page) {
 test("empty DB shows onboarding with honest Slack guidance, no fixture agent", async ({ page }) => {
   await stubBackend(page);
   await page.goto("/?api=1");
-  await expect(page.getByText("Welcome to AgentOS")).toBeVisible();
+  await expect(page.getByText("Welcome to Curie")).toBeVisible();
   await expect(page.getByText("Connect Slack").first()).toBeVisible();
   await expect(page.getByText("apps/dispatcher/slack-app-manifest.yaml").first()).toBeVisible();
   await expect(page.getByTestId("slack-test-hint")).toBeVisible();

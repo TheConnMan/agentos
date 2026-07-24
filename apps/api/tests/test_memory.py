@@ -13,7 +13,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 import asyncpg
-from agentos_api.config import get_settings
+from curie_api.config import get_settings
 from sqlalchemy import make_url
 
 
@@ -56,7 +56,7 @@ async def _install_memory_update_gate() -> None:
     try:
         await connection.execute(
             """
-            CREATE OR REPLACE FUNCTION agentos.test_memory_update_gate()
+            CREATE OR REPLACE FUNCTION curie.test_memory_update_gate()
             RETURNS trigger
             LANGUAGE plpgsql
             AS $$
@@ -70,9 +70,9 @@ async def _install_memory_update_gate() -> None:
         await connection.execute(
             """
             CREATE TRIGGER test_memory_update_gate
-            BEFORE UPDATE ON agentos.workflow_state_entries
+            BEFORE UPDATE ON curie.workflow_state_entries
             FOR EACH ROW
-            EXECUTE FUNCTION agentos.test_memory_update_gate()
+            EXECUTE FUNCTION curie.test_memory_update_gate()
             """
         )
     finally:
@@ -85,11 +85,11 @@ async def _remove_memory_update_gate() -> None:
         await connection.execute(
             """
             DROP TRIGGER IF EXISTS test_memory_update_gate
-            ON agentos.workflow_state_entries
+            ON curie.workflow_state_entries
             """
         )
         await connection.execute(
-            "DROP FUNCTION IF EXISTS agentos.test_memory_update_gate()"
+            "DROP FUNCTION IF EXISTS curie.test_memory_update_gate()"
         )
     finally:
         await connection.close()

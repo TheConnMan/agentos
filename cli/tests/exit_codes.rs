@@ -1,9 +1,9 @@
 //! Unit-level coverage for the semantic exit-code + error-classification
 //! contract (ADR-0021 decision 1, AC 2 and AC 4). These reference the
-//! yet-to-exist `agentos::exit` module, so the file will not compile until the
+//! yet-to-exist `curie::exit` module, so the file will not compile until the
 //! implementer adds it; that red state is the contract handoff.
 
-use agentos::exit::{self, CliError, ExitClass};
+use curie::exit::{self, CliError, ExitClass};
 
 #[test]
 fn exit_class_codes_are_stable() {

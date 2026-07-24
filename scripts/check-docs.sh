@@ -29,7 +29,7 @@ if [ -n "$dupes" ]; then
 fi
 
 echo "== regenerating the seam table, the ADR index, and per-doc headers =="
-uv run python -m agentos_doclint --repo-root "$repo_root" --write
+uv run python -m curie_doclint --repo-root "$repo_root" --write
 
 echo "== checking for drift =="
 if ! git diff --exit-code -- "${generated_docs[@]}"; then
@@ -39,6 +39,6 @@ if ! git diff --exit-code -- "${generated_docs[@]}"; then
 fi
 
 echo "== linting citations under the linted root =="
-uv run python -m agentos_doclint --repo-root "$repo_root"
+uv run python -m curie_doclint --repo-root "$repo_root"
 
 echo "OK: the interface catalog is generated, drift-free, and every citation resolves."

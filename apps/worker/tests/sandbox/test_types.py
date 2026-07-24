@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 
-from agentos_worker.sandbox.types import RouteRecord, SandboxHandle
+from curie_worker.sandbox.types import RouteRecord, SandboxHandle
 
 
 def _handle(**overrides: object) -> SandboxHandle:

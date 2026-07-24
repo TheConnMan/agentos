@@ -21,31 +21,31 @@ import aiohttp
 import pytest
 import redis
 from aci_protocol import Final, OutboundEvent, SessionStatus
-from agentos_test_support.valkey import (
-    VALKEY_HOST as _VALKEY_HOST,
-)
-from agentos_test_support.valkey import (
-    VALKEY_PORT as _VALKEY_PORT,
-)
-from agentos_test_support.valkey import (
-    VALKEY_PW as _VALKEY_PW,
-)
-from agentos_test_support.valkey import (
-    connect_or_skip,
-)
-from agentos_worker.approval_cards import ApprovalCardStore
-from agentos_worker.behaviorpacks import NavPack
-from agentos_worker.config import WorkerConfig
-from agentos_worker.kernel import Kernel
-from agentos_worker.markers import Markers
-from agentos_worker.runner_client import RunnerClient
-from agentos_worker.sandbox import AffinityStore, SandboxSubstrate, SubstrateConfig
-from agentos_worker.sandbox.types import ClaimView, SandboxView
-from agentos_worker.slack_sink import SlackSink
-from agentos_worker.threadlock import ThreadLock
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from channel_protocol import OutboundMessage
+from curie_test_support.valkey import (
+    VALKEY_HOST as _VALKEY_HOST,
+)
+from curie_test_support.valkey import (
+    VALKEY_PORT as _VALKEY_PORT,
+)
+from curie_test_support.valkey import (
+    VALKEY_PW as _VALKEY_PW,
+)
+from curie_test_support.valkey import (
+    connect_or_skip,
+)
+from curie_worker.approval_cards import ApprovalCardStore
+from curie_worker.behaviorpacks import NavPack
+from curie_worker.config import WorkerConfig
+from curie_worker.kernel import Kernel
+from curie_worker.markers import Markers
+from curie_worker.runner_client import RunnerClient
+from curie_worker.sandbox import AffinityStore, SandboxSubstrate, SubstrateConfig
+from curie_worker.sandbox.types import ClaimView, SandboxView
+from curie_worker.slack_sink import SlackSink
+from curie_worker.threadlock import ThreadLock
 from redis.asyncio import Redis as AsyncRedis
 
 
@@ -61,10 +61,10 @@ def names(sync_redis: redis.Redis) -> Iterator[dict[str, str]]:
     """Per-test-unique stream / group / key prefixes on the shared Valkey."""
     token = uuid.uuid4().hex
     ns = {
-        "stream": f"test:agentos:runs:{token}",
+        "stream": f"test:curie:runs:{token}",
         "group": f"g-{token}",
-        "prefix": f"test:agentos:worker:{token}",
-        "sandbox_prefix": f"test:agentos:sandbox:{token}",
+        "prefix": f"test:curie:worker:{token}",
+        "sandbox_prefix": f"test:curie:sandbox:{token}",
     }
     yield ns
     for pat in (f"{ns['prefix']}*", f"{ns['sandbox_prefix']}*", ns["stream"]):
@@ -238,7 +238,7 @@ class FakeK8s:
         self.claims[name] = _FakeClaim(
             name=name,
             sandbox_name=sandbox_name,
-            labels={"agentos.dev/managed-by": "agentos-sandbox-substrate", **(labels or {})},
+            labels={"curietech.ai/managed-by": "curie-sandbox-substrate", **(labels or {})},
         )
         self.sandboxes[sandbox_name] = _FakeSandbox(name=sandbox_name)
 
@@ -451,7 +451,7 @@ async def kernel_harness(
     )
     killswitch = None
     if with_killswitch:
-        from agentos_worker.killswitch import KillSwitch
+        from curie_worker.killswitch import KillSwitch
 
         killswitch = KillSwitch(async_redis, on_kill=kernel.interrupt_agent)
         kernel.attach_killswitch(killswitch)

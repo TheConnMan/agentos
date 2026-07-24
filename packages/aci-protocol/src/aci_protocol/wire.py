@@ -26,7 +26,7 @@ payload the API has ever produced still decodes. What changes is that a payload
 producer and it always emits the key, no live payload is affected. The worker's
 default was drift, not a designed tolerance.
 
-**``EvalJob.model`` stays optional (#526).** It lets ``agentos eval`` target a
+**``EvalJob.model`` stays optional (#526).** It lets ``curie eval`` target a
 named model instead of only the boot-time default so a suite can sweep N models.
 It is the intended forward-compatible evolution of the single-``payload`` seam --
 an older consumer ignores the field, a newer one honours it. Making it required

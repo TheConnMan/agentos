@@ -40,8 +40,8 @@ SBOM_SUFFIX = ".spdx.json"
 
 # The CLI targets built by the `cli-binaries` job. Keep in lockstep with its matrix.
 BINARY_ASSETS = (
-    "agentos-x86_64-unknown-linux-gnu",
-    "agentos-aarch64-apple-darwin",
+    "curie-x86_64-unknown-linux-gnu",
+    "curie-aarch64-apple-darwin",
 )
 COMPOSE_ASSET = "compose.release.yaml"
 
@@ -52,7 +52,7 @@ class IntegrityError(Exception):
 
 def chart_asset(version: str) -> str:
     """The chart tgz `helm package --version <version>` produces."""
-    return f"agentos-{version}.tgz"
+    return f"curie-{version}.tgz"
 
 
 def required_assets(version: str) -> list[str]:

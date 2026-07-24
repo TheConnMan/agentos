@@ -49,7 +49,7 @@ def upgrade() -> None:
     # created the column in the same revision) makes this idempotent and keeps an
     # out-of-band re-run from overwriting rows the new runtime paths marked.
     op.execute(
-        "UPDATE agentos.approvals SET resumed_at = resolved_at "
+        "UPDATE curie.approvals SET resumed_at = resolved_at "
         "WHERE status = 'expired' AND resolved_at IS NOT NULL "
         "AND resumed_at IS NULL "
         "AND resolved_at < now() - interval '24 hours'"

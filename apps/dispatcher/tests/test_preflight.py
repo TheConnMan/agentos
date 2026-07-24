@@ -30,10 +30,10 @@ from contextlib import contextmanager
 
 import httpx
 import pytest
-from agentos_dispatcher.config import DispatcherConfig
-from agentos_dispatcher.preflight import ApiUnreachableError, check_api_reachable
+from curie_dispatcher.config import DispatcherConfig
+from curie_dispatcher.preflight import ApiUnreachableError, check_api_reachable
 
-API_URL = "http://agentos-api:8000"
+API_URL = "http://curie-api:8000"
 
 
 def _config(**overrides: object) -> DispatcherConfig:
@@ -159,7 +159,7 @@ def test_health_url_tolerates_a_trailing_slash() -> None:
 
     ``ApprovalResolveClient`` already rstrips its base; the preflight builds its
     own URL and must do the same or a perfectly reasonable
-    `http://agentos-api:8000/` fails the gate on a correctly wired stack.
+    `http://curie-api:8000/` fails the gate on a correctly wired stack.
     """
     requested: list[str] = []
 
@@ -282,7 +282,7 @@ def test_userinfo_in_the_base_url_is_kept_out_of_logs(
     logger = logging.getLogger("test-preflight-userinfo")
     with caplog.at_level(logging.INFO, logger="test-preflight-userinfo"):
         check_api_reachable(
-            _config(api_base_url="http://user:hunter2@agentos-api:8000"),
+            _config(api_base_url="http://user:hunter2@curie-api:8000"),
             logger=logger,
             client=_client(_ok),
         )
@@ -291,7 +291,7 @@ def test_userinfo_in_the_base_url_is_kept_out_of_logs(
     assert "hunter2" not in logged and "user" not in logged, (
         f"the preflight logged the URL's userinfo: {logged!r}"
     )
-    assert "agentos-api:8000" in logged, (
+    assert "curie-api:8000" in logged, (
         f"AC2 still requires the log to name the resolved URL; got {logged!r}"
     )
 
@@ -302,7 +302,7 @@ def test_userinfo_is_stripped_from_the_error_too() -> None:
     with pytest.raises(ApiUnreachableError) as excinfo:
         check_api_reachable(
             _config(
-                api_base_url="http://user:hunter2@agentos-api:8000",
+                api_base_url="http://user:hunter2@curie-api:8000",
                 api_preflight_timeout_s=0.05,
             ),
             logger=logging.getLogger("test-preflight"),
@@ -310,7 +310,7 @@ def test_userinfo_is_stripped_from_the_error_too() -> None:
         )
 
     assert "hunter2" not in str(excinfo.value)
-    assert "agentos-api:8000" in str(excinfo.value)
+    assert "curie-api:8000" in str(excinfo.value)
 
 
 def test_run_main_gates_before_connecting_slack(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -323,7 +323,7 @@ def test_run_main_gates_before_connecting_slack(monkeypatch: pytest.MonkeyPatch)
     first. The API is a genuinely dead port, so nothing is stubbed on the path
     under test.
     """
-    from agentos_dispatcher import run
+    from curie_dispatcher import run
 
     reached_slack: list[str] = []
 
@@ -339,10 +339,10 @@ def test_run_main_gates_before_connecting_slack(monkeypatch: pytest.MonkeyPatch)
         alias = field.validation_alias
         monkeypatch.delenv(alias if isinstance(alias, str) else name.upper(), raising=False)
     # Port 1 is reserved and never listening: a real, immediate connection refusal.
-    monkeypatch.setenv("AGENTOS_API_URL", "http://127.0.0.1:1")
-    monkeypatch.setenv("AGENTOS_API_PREFLIGHT_TIMEOUT_SECONDS", "0.2")
-    monkeypatch.setenv("AGENTOS_BACKOFF_INITIAL_SECONDS", "0.01")
-    monkeypatch.setenv("AGENTOS_BACKOFF_MAX_SECONDS", "0.02")
+    monkeypatch.setenv("CURIE_API_URL", "http://127.0.0.1:1")
+    monkeypatch.setenv("CURIE_API_PREFLIGHT_TIMEOUT_SECONDS", "0.2")
+    monkeypatch.setenv("CURIE_BACKOFF_INITIAL_SECONDS", "0.01")
+    monkeypatch.setenv("CURIE_BACKOFF_MAX_SECONDS", "0.02")
 
     with pytest.raises(SystemExit) as excinfo:
         run.main()

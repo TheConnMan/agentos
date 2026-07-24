@@ -14,8 +14,8 @@ field-name sets per pair so that divergence fails loudly instead.
 from __future__ import annotations
 
 import pytest
-from agentos_api import schemas as api
-from agentos_worker import behaviorpacks as worker
+from curie_api import schemas as api
+from curie_worker import behaviorpacks as worker
 
 # (API write-side model, worker read-side model). An added-but-unpaired pack
 # surfaces here too: forgetting to list it leaves it ungated, but the eight

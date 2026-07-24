@@ -1,4 +1,4 @@
-"""Versioned semantic messages rendered by Slack, the AgentOS TUI, and future channels."""
+"""Versioned semantic messages rendered by Slack, the Curie TUI, and future channels."""
 
 from enum import StrEnum
 from typing import Annotated, Literal

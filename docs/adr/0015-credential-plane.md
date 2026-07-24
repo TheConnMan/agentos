@@ -4,10 +4,10 @@ Date: 2026-07-09
 Status: Accepted
 
 Retroactive record of how a model credential reaches the model, already built into
-[`runner/src/agentos_runner/sdk_auth.py`](../../runner/src/agentos_runner/sdk_auth.py).
+[`runner/src/curie_runner/sdk_auth.py`](../../runner/src/curie_runner/sdk_auth.py).
 ADR-0005 anticipated this ("production runners need a proper API-key / Bedrock /
 Vertex path, ADR-worthy when that lane lands"); that lane has landed
-([#24](https://github.com/curie-eng/agentos/issues/24)).
+([#24](https://github.com/curie-eng/curie/issues/24)).
 
 ## Context
 
@@ -21,7 +21,7 @@ credential must fail visibly rather than silently degrade.
 
 A credential flows from a Helm Secret to the model env variable with no
 application process brokering it: chart Secret -> worker env
-`AGENTOS_CREDENTIALS` -> injected into the claim boot env -> the runner maps it.
+`CURIE_CREDENTIALS` -> injected into the claim boot env -> the runner maps it.
 The runner's mapping is prefix-based and fails loud on anything it cannot use
 (`sdk_auth.py:39`, `:51`):
 
@@ -34,13 +34,13 @@ The runner's mapping is prefix-based and fails loud on anything it cannot use
 - bare `sk-...` -> raises `UnsupportedCredentialError` rather than forwarding a key
   the SDK cannot use.
 
-The real model is the default. `AGENTOS_FAKE_MODEL` is a test-only knob; a missing
+The real model is the default. `CURIE_FAKE_MODEL` is a test-only knob; a missing
 credential fails **closed** rather than degrading to the fake model
-([`binding.py:137`](../../apps/worker/src/agentos_worker/binding.py),
-[`sandbox/docker.py:18`](../../apps/worker/src/agentos_worker/sandbox/docker.py),
-[`runner/__main__.py:62`](../../runner/src/agentos_runner/__main__.py)). An explicit
+([`binding.py:137`](../../apps/worker/src/curie_worker/binding.py),
+[`sandbox/docker.py:18`](../../apps/worker/src/curie_worker/sandbox/docker.py),
+[`runner/__main__.py:62`](../../runner/src/curie_runner/__main__.py)). An explicit
 SDK credential already in the env always wins, and the mapping is a no-op when
-`AGENTOS_CREDENTIALS` is unset.
+`CURIE_CREDENTIALS` is unset.
 
 ## Alternatives considered
 
@@ -50,9 +50,9 @@ SDK credential already in the env always wins, and the mapping is a no-op when
   secret, the better it reviews.
 - **Forward whatever credential is in the ambient environment (convenience
   fallback).** Rejected, and this is not hypothetical: an ambient
-  `CLAUDE_CODE_OAUTH_TOKEN` shadowing `AGENTOS_CREDENTIALS` leaked into runners and
-  broke auth ([#106](https://github.com/curie-eng/agentos/issues/106), fixed in
-  [PR #109](https://github.com/curie-eng/agentos/pull/109)). Positive, by-name
+  `CLAUDE_CODE_OAUTH_TOKEN` shadowing `CURIE_CREDENTIALS` leaked into runners and
+  broke auth ([#106](https://github.com/curie-eng/curie/issues/106), fixed in
+  [PR #109](https://github.com/curie-eng/curie/pull/109)). Positive, by-name
   credential selection is the deliberate guard.
 - **Default to the fake model when no credential is present.** Rejected: it turns
   a misconfiguration into a silently-wrong answer. Fail-closed surfaces the problem
@@ -60,10 +60,10 @@ SDK credential already in the env always wins, and the mapping is a no-op when
 - **A separate harness per model provider for BYO.** Rejected: OpenRouter exposes a
   native Anthropic Messages endpoint, so a base-URL override keeps one wire format
   and preserves prompt caching, instead of swapping the harness
-  ([#24](https://github.com/curie-eng/agentos/issues/24); see PRs
-  [#94](https://github.com/curie-eng/agentos/pull/94),
-  [#98](https://github.com/curie-eng/agentos/pull/98),
-  [#105](https://github.com/curie-eng/agentos/pull/105)).
+  ([#24](https://github.com/curie-eng/curie/issues/24); see PRs
+  [#94](https://github.com/curie-eng/curie/pull/94),
+  [#98](https://github.com/curie-eng/curie/pull/98),
+  [#105](https://github.com/curie-eng/curie/pull/105)).
 
 ## Consequences
 
@@ -77,6 +77,6 @@ SDK credential already in the env always wins, and the mapping is a no-op when
   recorded in ADR-0009; this ADR governs only the model credential the SDK reads.
 - Related hardening (default credentials shipping enabled, the ACI HTTP channel
   having no auth) is tracked separately
-  ([#57](https://github.com/curie-eng/agentos/issues/57),
-  [#63](https://github.com/curie-eng/agentos/issues/63)) and does not change this
+  ([#57](https://github.com/curie-eng/curie/issues/57),
+  [#63](https://github.com/curie-eng/curie/issues/63)) and does not change this
   decision.

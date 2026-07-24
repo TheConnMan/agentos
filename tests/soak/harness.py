@@ -52,14 +52,14 @@ class SoakConfig:
             os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
         )
         return cls(
-            namespace=os.environ.get("AGENTOS_SANDBOX_E2E_NAMESPACE", "agentos-g1"),
-            pool=os.environ.get("AGENTOS_SANDBOX_E2E_POOL", "agentos-g1-runner-pool"),
+            namespace=os.environ.get("CURIE_SANDBOX_E2E_NAMESPACE", "curie-g1"),
+            pool=os.environ.get("CURIE_SANDBOX_E2E_POOL", "curie-g1-runner-pool"),
             valkey_host=os.environ.get("TEST_VALKEY_HOST", "localhost"),
             valkey_port=int(os.environ.get("TEST_VALKEY_PORT", "26379")),
             valkey_password=password,
-            concurrency=int(os.environ.get("AGENTOS_SOAK_CONCURRENCY", "5")),
-            batch=int(os.environ.get("AGENTOS_SOAK_BATCH", "3")),
-            runs=int(os.environ.get("AGENTOS_SOAK_RUNS", "1")),
+            concurrency=int(os.environ.get("CURIE_SOAK_CONCURRENCY", "5")),
+            batch=int(os.environ.get("CURIE_SOAK_BATCH", "3")),
+            runs=int(os.environ.get("CURIE_SOAK_RUNS", "1")),
             live_creds=live,
         )
 
@@ -70,7 +70,7 @@ class SoakConfig:
 def thread_hash(thread_key: str) -> str:
     """The sha256[:10] thread hash the worker stamps on claim names and labels.
 
-    Mirrors ``SubstrateConfig.claim_name_for`` and the ``agentos.dev/thread-hash``
+    Mirrors ``SubstrateConfig.claim_name_for`` and the ``curietech.ai/thread-hash``
     label so the soak can select a thread's cluster-side resources by label.
     """
 
@@ -220,7 +220,7 @@ def live_sandboxclaims(cfg: SoakConfig, thread_hash_value: str) -> list[dict[str
         "get",
         "sandboxclaims",
         "-l",
-        f"agentos.dev/thread-hash={thread_hash_value}",
+        f"curietech.ai/thread-hash={thread_hash_value}",
         "-o",
         "json",
     )

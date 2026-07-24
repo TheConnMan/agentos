@@ -4,7 +4,7 @@ Date: 2026-07-17
 
 Status: Accepted
 
-Implements [#520](https://github.com/curie-eng/agentos/issues/520) (sub-items 1
+Implements [#520](https://github.com/curie-eng/curie/issues/520) (sub-items 1
 and 2). Ports two fail-closed patterns reviewed in `xai-org/grok-build`; the
 patterns only, never the mechanism (Grok's sandbox is weaker than ours on every
 axis — in-process Landlock/Seatbelt, Linux-only, no egress allowlist, no
@@ -13,7 +13,7 @@ per-agent secrets).
 ## Context
 
 The runner decides which tools are approval-required by unioning two sources
-(`__main__`): the operator's `AGENTOS_APPROVAL_REQUIRED_TOOLS` (a bare list of
+(`__main__`): the operator's `CURIE_APPROVAL_REQUIRED_TOOLS` (a bare list of
 names, no routes) and the bundle manifest's `approvalPolicy` gates (versioned
 with the agent, each carrying its route). Two fail-open surfaces sat in that
 merge.
@@ -43,7 +43,7 @@ opposite blast radius.
 **2. The anti-hollow-out property was already held — by the union.** The gated
 tool set is `operator | bundle`, and because no bundle-supplied value is ever
 subtracted from it, a bundle cannot keep a trusted name while emptying what it
-restricts. That is the Grok pattern's core, and AgentOS already satisfies it.
+restricts. That is the Grok pattern's core, and Curie already satisfies it.
 What it did not hold was a regression *guard*: nothing pinned the union, so a
 later refactor to a dict update, a bundle-wins precedence, or `policy_routes`
 used directly as `required` would have broken it silently.
@@ -101,7 +101,7 @@ implemented the refusal and reversed it on review, because the refusal is
 disproportionate to a bounded widening and the crash it causes is reachable
 through the product's own documented flow:
 
-- `agentos <tier> approvals` reports the operator field and the deployed
+- `curie <tier> approvals` reports the operator field and the deployed
   manifest's gates as **one unlabeled list** (`cli/src/commands.rs`, the #607
   union), while `--gate` writes a **full replacement** through `PATCH
   /agents/{id}`. So an operator who reads the displayed gates and re-passes them

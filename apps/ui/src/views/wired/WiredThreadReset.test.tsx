@@ -95,7 +95,7 @@ describe("WiredThreadReset (#871)", () => {
     // Default env is prod -> cluster reset-thread, carrying the entered key and --yes.
     expect(
       screen.getByRole("button", {
-        name: "Copy command: agentos cluster reset-thread deal-desk --thread-key 1699.0012 --yes",
+        name: "Copy command: curie cluster reset-thread deal-desk --thread-key 1699.0012 --yes",
       }),
     ).toBeInTheDocument();
   });

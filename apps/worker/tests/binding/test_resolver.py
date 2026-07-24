@@ -1,6 +1,6 @@
 """BindingResolver against the REAL compose Postgres (never mocked).
 
-Seeds agents / agent_versions / deployments in the agentos schema, then checks
+Seeds agents / agent_versions / deployments in the curie schema, then checks
 channel resolution, the prod-over-dev preference, unknown-channel -> None, and
 the budget/env construction. Rows are namespaced by a per-test token and cleaned
 up afterwards.
@@ -14,7 +14,7 @@ import os
 import uuid
 
 import pytest
-from agentos_worker.binding import (
+from curie_worker.binding import (
     APPROVAL_REQUIRED_ENV,
     BUDGET_ENV,
     BUNDLE_REF_ENV,
@@ -24,8 +24,8 @@ from agentos_worker.binding import (
     BindingResolver,
     ResolvedDeployment,
 )
-from agentos_worker.config import WorkerConfig
-from agentos_worker.sandbox_token import verify
+from curie_worker.config import WorkerConfig
+from curie_worker.sandbox_token import verify
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 _DB_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:25432/postgres"
 )
-_SCHEMA = os.environ.get("TEST_DB_SCHEMA", "agentos")
+_SCHEMA = os.environ.get("TEST_DB_SCHEMA", "curie")
 
 
 async def _seed_agent(

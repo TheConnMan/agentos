@@ -33,12 +33,12 @@ event.
 
 | Field | Env var | Notes |
 |---|---|---|
-| `plugin_dir` | `AGENTOS_PLUGIN_DIR` | mounted plugin bundle at pinned version |
-| `session_id` | `AGENTOS_SESSION_ID` | thread-derived session id |
-| `sandbox_id` | `AGENTOS_SANDBOX_ID` | claimed sandbox id |
-| `budget` | `AGENTOS_BUDGET` | JSON `Budget` object |
-| `memory_ref` | `AGENTOS_MEMORY_REF` | optional; S3 path / API URL |
-| `credentials_ref` | `AGENTOS_CREDENTIALS` | optional; reference to injected secrets |
+| `plugin_dir` | `CURIE_PLUGIN_DIR` | mounted plugin bundle at pinned version |
+| `session_id` | `CURIE_SESSION_ID` | thread-derived session id |
+| `sandbox_id` | `CURIE_SANDBOX_ID` | claimed sandbox id |
+| `budget` | `CURIE_BUDGET` | JSON `Budget` object |
+| `memory_ref` | `CURIE_MEMORY_REF` | optional; S3 path / API URL |
+| `credentials_ref` | `CURIE_CREDENTIALS` | optional; reference to injected secrets |
 | `otel` | `OTEL_EXPORTER_OTLP_ENDPOINT` / `_HEADERS` / `_PROTOCOL` | optional |
 
 `Budget` = `{max_output_tokens_per_run: int, task_budget_hint: int | None, max_usd_per_day: float}`.
@@ -99,7 +99,7 @@ compiles the generated Rust (`cargo test`) and TypeScript (`tsc --noEmit`).
   messages are a discriminated union on an added `kind` field. `Event.type`
   keeps its section-0 meaning (`message|job|eval_case`).
 - **`credentials_ref` carries a reference, not secret material.** Section 0
-  describes `AGENTOS_CREDENTIALS` as per-tool secrets via K8s Secret refs, so
+  describes `CURIE_CREDENTIALS` as per-tool secrets via K8s Secret refs, so
   the typed contract holds the reference string, not the secrets.
 - **`OtelConfig` captures a fixed subset.** `OTEL_EXPORTER_OTLP_*` is a wildcard
   in section 0; the typed view models the three standard fields the prototype

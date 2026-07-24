@@ -7,7 +7,7 @@ that implements the same verbs is too.
 """
 
 import redis
-from agentos_dispatcher.queue import StreamPublisher
+from curie_dispatcher.queue import StreamPublisher
 
 
 def test_redis_client_satisfies_publisher_port() -> None:

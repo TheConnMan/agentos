@@ -36,7 +36,7 @@ _MODELS = (
     ApprovalGate,
 )
 
-SCHEMA_ID = "https://curie.tech/agentos/plugin-format.schema.json"
+SCHEMA_ID = "https://curietech.ai/schemas/plugin-format.schema.json"
 
 
 def schema_path() -> Path:

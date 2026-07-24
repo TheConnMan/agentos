@@ -4,7 +4,7 @@ Date: 2026-07-16
 
 Status: Accepted
 
-Implements [#452](https://github.com/curie-eng/agentos/issues/452).
+Implements [#452](https://github.com/curie-eng/curie/issues/452).
 
 ## Context
 
@@ -47,14 +47,14 @@ declared source per seam and gating it in CI.** Three parts:
   the front-matter forces each of those contradictions to be resolved by a human,
   once. That reconciliation is the ticket's real value.
 
-- **A generator emits the derived views from that source.** `agentos dev docs-lint`
+- **A generator emits the derived views from that source.** `curie dev docs-lint`
   regenerates the seam table in `docs/interfaces.md` and each doc's header
   blockquote from the front-matter, replacing only the region between explicit
   `<!-- BEGIN/END GENERATED -->` markers so hand-written prose and generated content
   coexist in one file. The blockquote becomes generated output, not hand prose, so
   the index can no longer disagree with the docs it summarizes.
 
-- **A CI doc-lint gates the catalog.** The same `agentos dev docs-lint` command
+- **A CI doc-lint gates the catalog.** The same `curie dev docs-lint` command
   (wrapped by `scripts/check-docs.sh`, mirroring `check-contracts.sh`: regenerate,
   then `git diff --exit-code`) runs in the existing `python` job and fails on: any
   line-number citation under the linted root (every recognized extension, and the
@@ -65,7 +65,7 @@ declared source per seam and gating it in CI.** Three parts:
   refactors where a line number rots on the next insertion above it.
 
 The tool is Python in a `tools/doclint` uv workspace member, behind a thin
-`agentos dev docs-lint` clap wrapper that shells the script exactly like its
+`curie dev docs-lint` clap wrapper that shells the script exactly like its
 `dev contracts` / `dev chart-check` siblings.
 
 ## Alternatives considered
@@ -74,14 +74,14 @@ The tool is Python in a `tools/doclint` uv workspace member, behind a thin
   encodes the current prose wording as a grammar and breaks on the next reword,
   which is the exact rot this ADR exists to stop. It also has no source at all for
   three of the index's columns, which are not in the blockquote.
-- **A Rust implementation under `agentos dev`.** Rejected: the resolver must parse
+- **A Rust implementation under `curie dev`.** Rejected: the resolver must parse
   Python to resolve cited symbols, and Python's `ast` module is the correct, free
   tool. A Rust reimplementation of Python symbol resolution is a real bug surface
   for zero user-facing benefit, and the `dev` namespace's own siblings are thin
   shell-outs to repo scripts, not Rust implementations.
 - **A bare `scripts/*.sh` with no CLI surface.** Rejected: root `CLAUDE.md` is
   explicit that a loose script should be the exception with a reason. The discoverable
-  `agentos dev` surface is the convention; the script stays the implementation.
+  `curie dev` surface is the convention; the script stays the implementation.
 - **Generating the Swap-readiness grade table too** (the `docs/interfaces.md` <->
   `docs/architecture-vision.md` verbatim duplicate). Deferred, not adopted this run:
   the grade table's source is a prose narrative with no per-seam home, so inventing

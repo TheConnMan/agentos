@@ -169,7 +169,7 @@ function SpanRow({ node, depth }: { node: ObservationNode; depth: number }) {
   );
 }
 
-// Probe one payload for the runner's OTel resource attribute (`agentos.sandbox_id`,
+// Probe one payload for the runner's OTel resource attribute (`curie.sandbox_id`,
 // the Docker container name locally / the sandbox pod name on k8s). Checks the
 // object itself plus the keys Langfuse may nest resource/metadata attributes under.
 function probeSandboxAttr(source: unknown): string | null {
@@ -185,7 +185,7 @@ function probeSandboxAttr(source: unknown): string | null {
   }
   for (const bag of candidates) {
     const rec = bag as Record<string, unknown>;
-    const hit = rec["agentos.sandbox_id"] ?? rec["sandbox_id"];
+    const hit = rec["curie.sandbox_id"] ?? rec["sandbox_id"];
     if (typeof hit === "string" && hit.trim() !== "") return hit;
   }
   return null;

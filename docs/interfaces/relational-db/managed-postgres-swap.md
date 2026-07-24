@@ -3,20 +3,20 @@
 > Companion to [INTERFACE.md](./INTERFACE.md). Part of the #84 relational-DB seam
 > epic; validates the concrete swap tracked by #283.
 
-Pointing AgentOS at a managed Postgres is a **connection-string change**, not a code
-change. The SQL/ORM layer (SQLAlchemy 2.0 async + Alembic) and the `agentos` schema
+Pointing Curie at a managed Postgres is a **connection-string change**, not a code
+change. The SQL/ORM layer (SQLAlchemy 2.0 async + Alembic) and the `curie` schema
 stay put; only the Postgres instance behind the DSN moves. This guide shows the swap
 and the one validation that proves it.
 
 ## The swap
 
 1. **Provision a Postgres** on your managed provider (RDS, Cloud SQL, Neon, or any
-   standard Postgres). No extensions are required. AgentOS confines its tables to a
-   dedicated `agentos` schema (`config.db_schema`), so it can share a database with
+   standard Postgres). No extensions are required. Curie confines its tables to a
+   dedicated `curie` schema (`config.db_schema`), so it can share a database with
    Langfuse without colliding with Langfuse's `public`-schema Prisma baseline.
 
 2. **Point `DATABASE_URL` at it.** The engine is built from this env var alone
-   (`apps/api/src/agentos_api/config.py`, `apps/api/src/agentos_api/db.py`). Use the
+   (`apps/api/src/curie_api/config.py`, `apps/api/src/curie_api/db.py`). Use the
    async `asyncpg` dialect:
 
    ```
@@ -28,8 +28,8 @@ and the one validation that proves it.
      plain host/port.
    - **Neon:** use the pooled or direct endpoint host; keep `sslmode=require`
      semantics by connecting over the provider's TLS endpoint.
-   - The role must own (or be able to create) the `agentos` schema. Migration
-     `0001_initial` issues `CREATE SCHEMA IF NOT EXISTS agentos`.
+   - The role must own (or be able to create) the `curie` schema. Migration
+     `0001_initial` issues `CREATE SCHEMA IF NOT EXISTS curie`.
 
 3. **Apply migrations** against the target:
 
@@ -49,7 +49,7 @@ family, so any managed Postgres is unaffected:
 1. **`postgresql.UUID` column type** — every primary/foreign key. Native `uuid` on
    any Postgres.
 2. **Schema-qualified tables + a schema-scoped native enum** — the `environment`
-   column is a native `CREATE TYPE ... environment` in the `agentos` schema. Created
+   column is a native `CREATE TYPE ... environment` in the `curie` schema. Created
    from the same migration on any Postgres.
 
 Cross-database portability (MySQL, etc.) is explicitly a non-goal
@@ -63,7 +63,7 @@ test suite's `migrated` fixture provisions a throwaway database reached **purely
 overriding `DATABASE_URL`** and runs `alembic upgrade head` against it — the exact
 shape of pointing the app at a managed Postgres. The test then asserts the schema
 came up cleanly and that both Postgres-isms materialized as expected (native `uuid`
-columns; the `environment` enum type in the `agentos` schema with the right labels;
+columns; the `environment` enum type in the `curie` schema with the right labels;
 zero tables in `public`).
 
 ```bash

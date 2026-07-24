@@ -4,12 +4,12 @@ Date: 2026-07-22
 
 Status: Accepted
 
-Extends ADR-0021 (the `agentos` CLI is a harness whose primary consumer is a
+Extends ADR-0021 (the `curie` CLI is a harness whose primary consumer is a
 coding agent, so its `--json` output is a machine contract) and sits alongside
 the ADR-0021 schema work that first published the `error`, `eval`, `message`,
 `observability`, and `status` schemas. Supersedes nothing.
 
-Closes [#634](https://github.com/curie-eng/agentos/issues/634) ("publish a
+Closes [#634](https://github.com/curie-eng/curie/issues/634) ("publish a
 committed, versioned JSON Schema for every agent-facing CLI result").
 
 ## Context
@@ -38,7 +38,7 @@ visible.
 1. **Every agent-facing `--json` result maps to a committed JSON Schema with an
    explicit version identity.** Schemas live in `cli/schema/*.schema.json`. Each
    carries a versioned `$id` whose last path segment is `vN` (e.g.
-   `https://schemas.agentos.dev/cli/kill/v1.json`); that `N` is the schema's
+   `https://schemas.curietech.ai/cli/kill/v1.json`); that `N` is the schema's
    version identity. Several results may map to one schema (all `message`
    variants share `message.schema.json`; every `--dry-run` plan is the
    `dry-run.schema.json` shape, embedded as one branch of each family's schema).
@@ -63,8 +63,8 @@ visible.
    declared — the same honest scope limit ADR-0021's emit-parity gate documents.
 
 4. **Schemas ship with the published CLI artifact.** `build.rs` embeds every
-   `cli/schema/*.schema.json` into the binary. `agentos schema-index` prints the
-   inventory index; `agentos schema-index <name>` prints a named schema. Both
+   `cli/schema/*.schema.json` into the binary. `curie schema-index` prints the
+   inventory index; `curie schema-index <name>` prints a named schema. Both
    work from a released binary with no source checkout — the documented discovery
    path. In a checkout the files are also directly at `cli/schema/`.
 

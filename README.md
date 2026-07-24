@@ -1,6 +1,6 @@
-# AgentOS
+# Curie
 
-[![CI](https://github.com/curie-eng/agentos/actions/workflows/ci.yaml/badge.svg)](https://github.com/curie-eng/agentos/actions/workflows/ci.yaml)
+[![CI](https://github.com/curie-eng/curie/actions/workflows/ci.yaml/badge.svg)](https://github.com/curie-eng/curie/actions/workflows/ci.yaml)
 
 Open-source, self-hostable developer platform for Slack-based agents. Connect
 Slack, author a Claude-Code-format plugin (skills + tools + MCP), deploy it as
@@ -9,16 +9,16 @@ free.
 
 New here? Start with [`QUICKSTART.md`](QUICKSTART.md) to get your first agent
 reply in about a minute. Then read [`docs/vision.md`](docs/vision.md) for what
-AgentOS is, who it is for, and what it could become. It is the north star we
+Curie is, who it is for, and what it could become. It is the north star we
 hold new features against.
 
 "Relay" is this project's internal codename (repo, commits, internal docs);
-"agentos" is the product-surface name — the CLI binary, the bot handle, the
+"curie" is the product-surface name — the CLI binary, the bot handle, the
 console. Both names refer to the same system.
 
-## What does AgentOS do?
+## What does Curie do?
 
-Your agent worked on your laptop and then broke once it was deployed. AgentOS is
+Your agent worked on your laptop and then broke once it was deployed. Curie is
 a harness that runs the **same immutable bundle** and the **same
 `evals/cases.json`** identically across three targets (`skill` in-process,
 `local` via docker compose, `cluster` on Kubernetes), so a tier-to-tier
@@ -31,8 +31,8 @@ is the production loop.
 A Slack `@mention` (or DM) is answered by a versioned plugin running in an
 isolated Kubernetes sandbox, with the run traced end to end and steerable
 mid-turn. A `git push` deploys that plugin under a bot identity: push to `dev`
-updates `@agentos-dev`, merging to `prod` promotes the same built artifact to
-`@agentos`. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full
+updates `@curie-dev`, merging to `prod` promotes the same built artifact to
+`@curie`. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full
 component map, a message-flow sequence diagram, and the deploy-flow sequence
 diagram.
 
@@ -40,7 +40,7 @@ diagram.
 
 Because "locally" and "deployed" were different runtimes: a different Python, a
 missing tool, an MCP server that resolved on your laptop and not in the cluster,
-a credential that was present in one place and absent in the other. AgentOS
+a credential that was present in one place and absent in the other. Curie
 removes that gap by construction. The thing you run locally and the thing that
 runs in production are the **same immutable bundle** claimed by the **same
 runner image** speaking the **same frozen ACI contract**; only the substrate
@@ -52,7 +52,7 @@ each rung is the same bundle on a heavier substrate.
 
 ## How do I test an agent the same way locally and on Kubernetes?
 
-You run the **same `evals/cases.json`** at every tier. `agentos skill eval`
+You run the **same `evals/cases.json`** at every tier. `curie skill eval`
 grades the bundle in-process; the `local` and `cluster` targets drive the same
 cases through the real queue → worker → sandbox → runner path a Slack mention
 takes, so an eval that passes on your laptop and fails on the cluster is the
@@ -72,7 +72,7 @@ built-vs-deferred split, see "What is built vs deferred" in
 does not duplicate that list, which only drifts out of sync.
 
 Forward-looking work is planned and tracked in
-[GitHub issues](https://github.com/curie-eng/agentos/issues), with larger
+[GitHub issues](https://github.com/curie-eng/curie/issues), with larger
 journeys filed as `epic`-labeled issues.
 
 ## Component map
@@ -83,9 +83,9 @@ journeys filed as `epic`-labeled issues.
 | [`apps/worker`](apps/worker/README.md) | Python (redis-py) | The concurrency kernel (routing, finish-race, steer/interrupt) + the Agent Sandbox substrate |
 | [`runner`](runner/README.md) | Python (claude-agent-sdk) | The streaming session server that implements the ACI contract inside a sandbox |
 | [`apps/api`](apps/api/README.md) | Python (FastAPI) | Agents/versions/deployments CRUD, plugin bundle pipeline, GitHub git-flow, Langfuse + pod-log proxies |
-| [`apps/ui`](apps/ui/README.md) | React (Vite + TS) | The AgentOS console: author, deploy, and observe agents |
-| [`cli`](cli/README.md) | Rust (clap + tokio) | The `agentos` CLI: local emulation, evals, deploy, and the cluster operator lifecycle (`up`/`status`/`down`) |
-| [`charts/agentos`](charts/agentos/README.md) | Helm | The umbrella chart: Langfuse + Postgres + Valkey + ClickHouse + MinIO + OTel Collector + the Agent Sandbox substrate, with security rails on by default |
+| [`apps/ui`](apps/ui/README.md) | React (Vite + TS) | The Curie console: author, deploy, and observe agents |
+| [`cli`](cli/README.md) | Rust (clap + tokio) | The `curie` CLI: local emulation, evals, deploy, and the cluster operator lifecycle (`up`/`status`/`down`) |
+| [`charts/curie`](charts/curie/README.md) | Helm | The umbrella chart: Langfuse + Postgres + Valkey + ClickHouse + MinIO + OTel Collector + the Agent Sandbox substrate, with security rails on by default |
 | [`packages/aci-protocol`](packages/aci-protocol/README.md) | Python (frozen, codegen to TS + Rust) | The ACI session protocol every lane speaks |
 | [`packages/plugin-format`](packages/plugin-format/README.md) | Python (frozen, codegen to JSON Schema) | The Claude Code plugin bundle shape, verbatim |
 
@@ -93,7 +93,7 @@ journeys filed as `epic`-labeled issues.
 
 Every CLI command that touches an environment takes a **target noun** in the
 middle: `skill`, `local`, or `cluster`. Pick the lightest one that answers your
-question. (`agentos init` is the exception: it scaffolds a bundle on disk and
+question. (`curie init` is the exception: it scaffolds a bundle on disk and
 targets no environment.) The point of the three targets is that the identical
 bundle and the identical `evals/cases.json` run across all of them, so promoting
 `skill` to `local` to `cluster` is a parity ladder, not three separate setups.
@@ -113,28 +113,28 @@ in front. `local` and `cluster` put the **full platform** (queue, worker,
 sandbox) in front of the identical runner and ACI, so a `message` walks the same
 path a real Slack mention would take.
 
-**`skill` (runner-only, fully offline).** `agentos skill up` boots the runner
+**`skill` (runner-only, fully offline).** `curie skill up` boots the runner
 image in Docker (add `--fake-model` for a fully offline round-trip), then
-`agentos skill message "..."` sends a synthetic Slack event to it and streams
-the NDJSON reply to your terminal. `agentos skill eval` runs a plugin's
+`curie skill message "..."` sends a synthetic Slack event to it and streams
+the NDJSON reply to your terminal. `curie skill eval` runs a plugin's
 `evals/cases.json` the same way. Abort a live `skill message` with Ctrl-C. This
 is the fastest inner loop for developing a plugin: zero Slack, zero platform,
 zero cluster. See `cli/README.md`.
 
-**`local` (full platform via compose, no Slack).** `agentos local up` brings up
-the `full` compose profile by default. `agentos local up --minimal` brings up
+**`local` (full platform via compose, no Slack).** `curie local up` brings up
+the `full` compose profile by default. `curie local up --minimal` brings up
 the smaller `core` profile (API, worker, Postgres, Valkey, MinIO). Then
-`agentos local deploy` pushes a bundle to the compose API, and
-`agentos local message "..."` drives a message through the real
+`curie local deploy` pushes a bundle to the compose API, and
+`curie local message "..."` drives a message through the real
 queue -> worker -> sandboxed runner -> reply path with no Slack and no
 Kubernetes. The compose worker runs the fake model by default, but exporting
 `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) in your shell is enough for a
-real model -- `agentos local up` flips to live automatically when a credential is
-present, matching `skill up`, so there is no manual `AGENTOS_FAKE_MODEL=0` step.
+real model -- `curie local up` flips to live automatically when a credential is
+present, matching `skill up`, so there is no manual `CURIE_FAKE_MODEL=0` step.
 See the local runbook below.
 
-**`cluster` (deployed Helm release).** `agentos cluster up` installs the platform
-on Kubernetes and `agentos cluster message "..."` drives the deployed release end
+**`cluster` (deployed Helm release).** `curie cluster up` installs the platform
+on Kubernetes and `curie cluster message "..."` drives the deployed release end
 to end with no Slack. See
 [How do I run my agent on a Kubernetes cluster?](#how-do-i-run-my-agent-on-a-kubernetes-cluster)
 and [`docs/operations.md`](docs/operations.md).
@@ -155,7 +155,7 @@ dispatcher:
 ```bash
 export SLACK_APP_TOKEN=xapp-... SLACK_BOT_TOKEN=xoxb-...
 export SLACK_API_BASE_URL=          # empty un-wires the worker's Slack stub
-agentos local up --slack
+curie local up --slack
 
 # Raw Docker needs the base profile plus Slack (the dispatcher depends on
 # valkey, a core service), for either compose file:
@@ -166,7 +166,7 @@ docker compose --profile full --profile slack -f compose.release.yaml up -d
 Slack allows exactly one Socket Mode owner per app token at a time, so do not
 also run a cluster dispatcher on the same Slack app: it is either/or per app.
 Because these are shell exports they persist for the session, so a later plain
-`agentos local up` in the same shell keeps the worker pointed at real Slack
+`curie local up` in the same shell keeps the worker pointed at real Slack
 (empty `SLACK_API_BASE_URL`) with the real bot token but no dispatcher feeding
 the queue; open a fresh shell (or `unset SLACK_API_BASE_URL`) to return to the
 Slack-free stub. For the full walkthrough (app creation from the manifest,
@@ -197,20 +197,20 @@ resolves the latest release, downloads the binary for your platform, verifies
 its signed checksum, and installs it to your PATH:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/curie-eng/agentos/main/get-agentos.sh | bash
+curl -fsSL https://raw.githubusercontent.com/curie-eng/curie/main/get-curie.sh | bash
 ```
 
 The installer always verifies the sha256 and runs `cosign verify-blob` when
-cosign is on PATH (set `AGENTOS_REQUIRE_COSIGN=1` to require it). To run every
+cosign is on PATH (set `CURIE_REQUIRE_COSIGN=1` to require it). To run every
 download-verify-install step by hand instead, or to verify with `gh attestation`,
 [`docs/release-verification.md`](docs/release-verification.md#verify-the-cli-before-installing-it)
 owns the fully manual flow. Then, from a bundle directory:
 
 ```bash
-agentos init my-agent && cd my-agent
-agentos skill up --fake-model    # offline scripted model, no credential
-agentos skill message "hello, are you there?"
-agentos skill down
+curie init my-agent && cd my-agent
+curie skill up --fake-model    # offline scripted model, no credential
+curie skill message "hello, are you there?"
+curie skill down
 ```
 
 That is the fastest inner loop: zero Slack, zero platform, zero cluster.
@@ -219,9 +219,9 @@ That is the fastest inner loop: zero Slack, zero platform, zero cluster.
 (queue, worker, sandbox), still no host-run worker and no cluster:
 
 ```bash
-agentos local up   # full profile: stores + API + worker + Langfuse + UI
-agentos local deploy --plugin-dir . --slack-channel C0123ABCD --api-url http://localhost:28000
-agentos local message "what changed in the last deploy?"
+curie local up   # full profile: stores + API + worker + Langfuse + UI
+curie local deploy --plugin-dir . --slack-channel C0123ABCD --api-url http://localhost:28000
+curie local message "what changed in the last deploy?"
 ```
 
 Watch it land in the console UI at `http://localhost:28080/?api=1`. `local up`
@@ -229,12 +229,12 @@ runs the fake model by default; export `CLAUDE_CODE_OAUTH_TOKEN` or
 `ANTHROPIC_API_KEY` beforehand for a real model. A release binary needs no
 repo checkout for either `local` or `cluster up` — it pulls the pinned chart
 release asset and pinned `compose.release.yaml` matching the binary version,
-caching both under `~/.cache/agentos/`.
+caching both under `~/.cache/curie/`.
 
 See [`QUICKSTART.md`](QUICKSTART.md) for: a real model in more depth, the
 offline `--local-model` demo (Ollama, no Anthropic key), running on a
 Kubernetes cluster, the `examples/` bundles, and the contributor path for
-building AgentOS itself from a repo checkout.
+building Curie itself from a repo checkout.
 
 ## How do I develop and verify a change?
 
@@ -253,16 +253,16 @@ building AgentOS itself from a repo checkout.
 
 ## How do I run my agent on a Kubernetes cluster?
 
-The same `agentos` binary installs and runs the platform on a Kubernetes
+The same `curie` binary installs and runs the platform on a Kubernetes
 cluster, wrapping the umbrella Helm chart the way `linkerd` or `cilium` wrap
 theirs. A downloaded release binary resolves the pinned chart release asset for
-its version, and `agentos local up` likewise resolves the pinned
-`compose.release.yaml`, caching both under `~/.cache/agentos/` with no repo
+its version, and `curie local up` likewise resolves the pinned
+`compose.release.yaml`, caching both under `~/.cache/curie/` with no repo
 checkout needed.
 Use `--chart <path>` when developing the chart locally. The short version:
 
-- `agentos cluster up` runs `helm upgrade --install` of `charts/agentos`; it reads
-  `AGENTOS_CREDENTIALS` (deprecated alias `AGENTOS_MODEL_CREDENTIALS`) to enable a real model (absent, the release
+- `curie cluster up` runs `helm upgrade --install` of `charts/curie`; it reads
+  `CURIE_CREDENTIALS` (deprecated alias `CURIE_MODEL_CREDENTIALS`) to enable a real model (absent, the release
   installs sealed with canned replies), and `--no-expose` keeps the UI and
   Langfuse ClusterIP-only. The credential alone still leaves the runner sandbox
   sealed against default-deny egress, so a real model stays unreachable until you
@@ -272,24 +272,24 @@ Use `--chart <path>` when developing the chart locally. The short version:
   the sealed default; `--allow-egress-host` is the model-provider convenience on
   top of it. Connecting Slack is a raw `helm upgrade
   --reuse-values` (not a CLI verb; the chart's `NOTES.txt` prints it).
-- `agentos cluster status` reports release health and access URLs; `agentos cluster down`
+- `curie cluster status` reports release health and access URLs; `curie cluster down`
   uninstalls and sweeps the runtime namespaces. Every verb takes `--dry-run`.
-- `agentos cluster message "..."` drives a deployed release end to end with no Slack.
+- `curie cluster message "..."` drives a deployed release end to end with no Slack.
 
 Full runbook (the credential model, the Slack-connect command, and the
 zero-Slack `message` flow) is in [`docs/operations.md`](docs/operations.md).
 
 ## License and trademarks
 
-AgentOS is released under the [Apache License 2.0](LICENSE); see [`NOTICE`](NOTICE)
-for attribution. "AgentOS" is a trademark of Curie Engineering. The code license
+Curie is released under the [Apache License 2.0](LICENSE); see [`NOTICE`](NOTICE)
+for attribution. "Curie" is a trademark of CurieTech AI. The code license
 does not grant trademark rights, and [`TRADEMARKS.md`](TRADEMARKS.md) explains
 what use of the name is fine without asking and what needs permission.
 
-If AgentOS is useful to you, especially if you build on it commercially, we'd
-love a link back to [github.com/curie-eng/agentos](https://github.com/curie-eng/agentos).
+If Curie is useful to you, especially if you build on it commercially, we'd
+love a link back to [github.com/curie-eng/curie](https://github.com/curie-eng/curie).
 It is a friendly request, not a license condition: nothing in the Apache License
-requires it, and you are free to use AgentOS whether or not you do.
+requires it, and you are free to use Curie whether or not you do.
 
 ## Where do I go next?
 

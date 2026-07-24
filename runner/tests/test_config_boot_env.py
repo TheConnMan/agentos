@@ -1,12 +1,12 @@
 """RunnerConfig consumes the declared BootEnv, with today's exact semantics.
 
 #488 makes ``BootEnv.from_env`` the runner's single parse of the boot env and
-deletes ``RunnerConfig.from_env``'s bare ``AGENTOS_*`` literals. The config it
+deletes ``RunnerConfig.from_env``'s bare ``CURIE_*`` literals. The config it
 produces from a given env must not change, so this module pins the parse
 per-knob against TODAY's behavior.
 
 The parse tolerance is deliberately NON-uniform and each knob keeps what it has:
-``AGENTOS_MAX_TURNS`` and ``AGENTOS_RUNNER_PORT`` RAISE on garbage (a bare
+``CURIE_MAX_TURNS`` and ``CURIE_RUNNER_PORT`` RAISE on garbage (a bare
 ``int()`` today), while the history-window knobs DEGRADE to their default on
 garbage and on a nonpositive value. Unifying them would be a behavior change
 wearing a consistency costume, so the asymmetry is pinned on both sides.
@@ -20,14 +20,14 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
-from agentos_runner import RunnerConfig
+from curie_runner import RunnerConfig
 from pydantic import ValidationError
 
 _BASE = {
-    "AGENTOS_PLUGIN_DIR": "/bundle",
-    "AGENTOS_SESSION_ID": "sess-1",
-    "AGENTOS_SANDBOX_ID": "sbx-1",
-    "AGENTOS_BUDGET": '{"max_output_tokens_per_run": 1000, "max_usd_per_day": 5.0}',
+    "CURIE_PLUGIN_DIR": "/bundle",
+    "CURIE_SESSION_ID": "sess-1",
+    "CURIE_SANDBOX_ID": "sbx-1",
+    "CURIE_BUDGET": '{"max_output_tokens_per_run": 1000, "max_usd_per_day": 5.0}',
 }
 
 
@@ -40,16 +40,16 @@ def test_full_boot_env_parses_to_the_same_config() -> None:
 
     env = dict(
         _BASE,
-        AGENTOS_MEMORY_REF="http://api/agents/a/state/memory",
-        AGENTOS_CREDENTIALS="cred-1",
-        AGENTOS_HISTORY_REF="http://api/agents/a/state/transcript/t",
-        AGENTOS_RUNNER_TOKEN="tok-1",
-        AGENTOS_MODEL="agent-pinned",
-        AGENTOS_APPROVAL_REQUIRED_TOOLS="Bash, Write ,",
-        AGENTOS_APPROVAL_GRANT_TOOL="  Bash  ",
-        AGENTOS_APPROVAL_RESUMED_KIND="  policy  ",
-        AGENTOS_MAX_TURNS="7",
-        AGENTOS_RUNNER_PORT="9090",
+        CURIE_MEMORY_REF="http://api/agents/a/state/memory",
+        CURIE_CREDENTIALS="cred-1",
+        CURIE_HISTORY_REF="http://api/agents/a/state/transcript/t",
+        CURIE_RUNNER_TOKEN="tok-1",
+        CURIE_MODEL="agent-pinned",
+        CURIE_APPROVAL_REQUIRED_TOOLS="Bash, Write ,",
+        CURIE_APPROVAL_GRANT_TOOL="  Bash  ",
+        CURIE_APPROVAL_RESUMED_KIND="  policy  ",
+        CURIE_MAX_TURNS="7",
+        CURIE_RUNNER_PORT="9090",
     )
 
     config = RunnerConfig.from_env(env)
@@ -86,7 +86,7 @@ def test_defaults_when_the_operator_knobs_are_absent() -> None:
 
 
 def test_approval_markers_blank_is_unset() -> None:
-    env = dict(_BASE, AGENTOS_APPROVAL_GRANT_TOOL="   ", AGENTOS_APPROVAL_RESUMED_KIND="")
+    env = dict(_BASE, CURIE_APPROVAL_GRANT_TOOL="   ", CURIE_APPROVAL_RESUMED_KIND="")
     config = RunnerConfig.from_env(env)
 
     # A blank grant must never read as a tool named "" that the gate then lets
@@ -96,7 +96,7 @@ def test_approval_markers_blank_is_unset() -> None:
 
 
 def test_approval_required_tools_all_blank_is_no_gates() -> None:
-    config = RunnerConfig.from_env(dict(_BASE, AGENTOS_APPROVAL_REQUIRED_TOOLS=" , , "))
+    config = RunnerConfig.from_env(dict(_BASE, CURIE_APPROVAL_REQUIRED_TOOLS=" , , "))
 
     assert not config.approval_required_tools
 
@@ -104,19 +104,19 @@ def test_approval_required_tools_all_blank_is_no_gates() -> None:
 def test_runner_token_empty_string_is_unset_not_empty() -> None:
     # The token is enforced only when configured (#63), so an empty value must
     # read as unset rather than turning on enforcement with an unusable token.
-    assert RunnerConfig.from_env(dict(_BASE, AGENTOS_RUNNER_TOKEN="")).runner_token is None
+    assert RunnerConfig.from_env(dict(_BASE, CURIE_RUNNER_TOKEN="")).runner_token is None
 
 
 def test_max_turns_raises_on_garbage() -> None:
     # Today's bare int(): an operator typo fails the boot loudly rather than
     # silently running with a different turn cap.
     with pytest.raises(ValueError):
-        RunnerConfig.from_env(dict(_BASE, AGENTOS_MAX_TURNS="lots"))
+        RunnerConfig.from_env(dict(_BASE, CURIE_MAX_TURNS="lots"))
 
 
 def test_runner_port_raises_on_garbage() -> None:
     with pytest.raises(ValueError):
-        RunnerConfig.from_env(dict(_BASE, AGENTOS_RUNNER_PORT="eighty"))
+        RunnerConfig.from_env(dict(_BASE, CURIE_RUNNER_PORT="eighty"))
 
 
 def test_history_window_comes_through_the_declared_surface() -> None:
@@ -127,7 +127,7 @@ def test_history_window_comes_through_the_declared_surface() -> None:
     """
 
     config = RunnerConfig.from_env(
-        dict(_BASE, AGENTOS_HISTORY_MAX_TURNS="4", AGENTOS_HISTORY_MAX_BYTES="2048")
+        dict(_BASE, CURIE_HISTORY_MAX_TURNS="4", CURIE_HISTORY_MAX_BYTES="2048")
     )
 
     assert config.history_max_turns == 4
@@ -144,7 +144,7 @@ def test_history_window_degrades_rather_than_raising(raw: str) -> None:
     """
 
     config = RunnerConfig.from_env(
-        dict(_BASE, AGENTOS_HISTORY_MAX_TURNS=raw, AGENTOS_HISTORY_MAX_BYTES=raw)
+        dict(_BASE, CURIE_HISTORY_MAX_TURNS=raw, CURIE_HISTORY_MAX_BYTES=raw)
     )
 
     assert config.history_max_turns is None
@@ -153,20 +153,20 @@ def test_history_window_degrades_rather_than_raising(raw: str) -> None:
 
 def test_malformed_budget_still_raises() -> None:
     with pytest.raises(ValidationError):
-        RunnerConfig.from_env(dict(_BASE, AGENTOS_BUDGET="{not json"))
+        RunnerConfig.from_env(dict(_BASE, CURIE_BUDGET="{not json"))
 
 
 def test_system_prompt_is_no_longer_a_config_surface() -> None:
     """The bundle is the declared system-prompt surface and always wins (AC5).
 
-    AGENTOS_SYSTEM_PROMPT let an operator env silently replace the prompt
+    CURIE_SYSTEM_PROMPT let an operator env silently replace the prompt
     versioned with the agent, which is unauditable: the bundle says one thing and
     the sandbox runs another.
     """
 
     assert "system_prompt" not in _field_names()
 
-    config = RunnerConfig.from_env(dict(_BASE, AGENTOS_SYSTEM_PROMPT="you-are-overridden"))
+    config = RunnerConfig.from_env(dict(_BASE, CURIE_SYSTEM_PROMPT="you-are-overridden"))
 
     # The env value must reach no field at all: if it lands anywhere on the
     # config, some boot path can still prefer it over the bundle's prompt.
@@ -182,6 +182,6 @@ def test_idempotent_tools_is_no_longer_a_config_surface() -> None:
 
     assert "idempotent_tools" not in _field_names()
 
-    config = RunnerConfig.from_env(dict(_BASE, AGENTOS_IDEMPOTENT_TOOLS="Read,Bash"))
+    config = RunnerConfig.from_env(dict(_BASE, CURIE_IDEMPOTENT_TOOLS="Read,Bash"))
 
     assert "Read" not in repr(dataclasses.astuple(config))

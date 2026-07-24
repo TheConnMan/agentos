@@ -1,4 +1,4 @@
-//! Command handlers behind the `agentos` subcommands.
+//! Command handlers behind the `curie` subcommands.
 //!
 //! main.rs owns the clap surface; each handler here owns one subcommand's
 //! behavior and speaks only through the library modules (docker, runner, api,
@@ -7,9 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use agentos_aci_protocol::{Budget, EventType, OutboundEvent, SessionStatus};
 use anyhow::{bail, Context, Result};
 use clap::ValueEnum;
+use curie_aci_protocol::{Budget, EventType, OutboundEvent, SessionStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiClient, BudgetConfig, ChannelOutcome};
@@ -64,7 +64,7 @@ impl DeployEnv {
     }
 }
 
-/// Options for `agentos skill up`, mirroring its clap flags.
+/// Options for `curie skill up`, mirroring its clap flags.
 pub struct StartOpts {
     pub plugin_dir: PathBuf,
     pub image: String,
@@ -91,7 +91,7 @@ pub struct StartOpts {
     pub replace: bool,
 }
 
-/// The versioned report emitted by `agentos_runner.check`.
+/// The versioned report emitted by `curie_runner.check`.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CheckReport {
     pub check: String,
@@ -158,7 +158,7 @@ pub fn check_outcome(report: &CheckReport) -> std::result::Result<(), crate::exi
         // never forwards, or MCP init exceeding the deadline. The printed
         // `reason:` lines say which, so point at them rather than guess.
         .with_fix(
-            "read the printed reason(s): fix the server's command/args, forward its credential with agentos skill up --secret <NAME>, or raise --timeout if MCP init ran long",
+            "read the printed reason(s): fix the server's command/args, forward its credential with curie skill up --secret <NAME>, or raise --timeout if MCP init ran long",
         )),
         "invalid_bundle" => {
             // An invalid bundle is a deterministic input error (exit 2, Usage),
@@ -172,7 +172,7 @@ pub fn check_outcome(report: &CheckReport) -> std::result::Result<(), crate::exi
                 message.push_str(&report.reasons.join("; "));
             }
             Err(crate::exit::CliError::usage(message).with_fix(
-                "fix the reported bundle-structure errors (.claude-plugin/plugin.json and skills/) and run agentos skill check again",
+                "fix the reported bundle-structure errors (.claude-plugin/plugin.json and skills/) and run curie skill check again",
             ))
         }
         verdict => Err(crate::exit::CliError {
@@ -312,7 +312,7 @@ pub fn init(
             None => derive_plugin_name(&adopt_dir).ok_or_else(|| {
                 anyhow::anyhow!(
                     "could not derive a kebab-case plugin name from {}; pass one explicitly: \
-                     agentos init <name> --adopt {}",
+                     curie init <name> --adopt {}",
                     adopt_dir.display(),
                     adopt_dir.display()
                 )
@@ -326,7 +326,7 @@ pub fn init(
             format!(
                 "adopted {} as plugin bundle '{name}' -- scaffolded the skeleton alongside \
                  your existing files. Port your agent's logic into skills/{name}/SKILL.md and \
-                 .mcp.json (see docs/adopting-a-bundle.md), then run `agentos skill up`.",
+                 .mcp.json (see docs/adopting-a-bundle.md), then run `curie skill up`.",
                 adopt_dir.display()
             ),
             created,
@@ -375,7 +375,7 @@ fn report_scaffold(
     });
 }
 
-/// The result of `agentos init` (both the plain-name and `--from-spec` branches),
+/// The result of `curie init` (both the plain-name and `--from-spec` branches),
 /// carried through `Ui::emit`. Under `--json` an agent gets the bundle name, the
 /// directory, the spec source (null for the plain-name path), the list of created
 /// paths, and the next-step command -- never empty stdout (issue #485). Owns its
@@ -395,7 +395,7 @@ impl InitOutput {
     /// `to_json` and `render` so the machine and human forms never drift.
     fn next_command(&self) -> String {
         format!(
-            "cd {} && agentos skill up",
+            "cd {} && curie skill up",
             crate::ops::shell_quote(&self.dir.display().to_string())
         )
     }
@@ -426,7 +426,7 @@ impl crate::ui::CliOutput for InitOutput {
     }
 }
 
-/// `agentos build`: build the runner image locally from the repo's Dockerfile.
+/// `curie build`: build the runner image locally from the repo's Dockerfile.
 /// The one-command equivalent of `docker build -f runner/Dockerfile -t <tag> .`
 /// run from the repo root. Errors clearly when Docker is missing or when run
 /// outside a source checkout (a release binary pulls the image from GHCR).
@@ -439,8 +439,8 @@ pub async fn build(tag: &str) -> Result<()> {
         );
     }
     let root = find_repo_root().context(
-        "runner/Dockerfile not found here or in any parent directory. Run `agentos build` \
-         from an agentos repo checkout -- a release binary pulls the runner image from GHCR \
+        "runner/Dockerfile not found here or in any parent directory. Run `curie build` \
+         from a curie repo checkout -- a release binary pulls the runner image from GHCR \
          automatically and never needs to build.",
     )?;
     ui.note(&format!(
@@ -461,7 +461,7 @@ pub async fn build(tag: &str) -> Result<()> {
     Ok(())
 }
 
-/// `agentos install`: from-a-checkout dev bootstrap/update -- install deps and
+/// `curie install`: from-a-checkout dev bootstrap/update -- install deps and
 /// build the runner image, but start nothing. Each step is idempotent and
 /// streams its output; update mode reuses already-present heavyweight artifacts.
 /// A missing tool prints a friendly pointer and stops. A release binary has no
@@ -469,12 +469,12 @@ pub async fn build(tag: &str) -> Result<()> {
 pub async fn install(update: bool) -> Result<()> {
     let ui = crate::ui::ui();
     let root = find_repo_root().context(
-        "runner/Dockerfile not found here or in any parent directory. Run `agentos install` \
-         from an agentos source checkout -- a release binary has nothing to install.",
+        "runner/Dockerfile not found here or in any parent directory. Run `curie install` \
+         from a curie source checkout -- a release binary has nothing to install.",
     )?;
 
     // 1. Local config is user-owned. It is gitignored and only created once,
-    // so pulling newer AgentOS sources and rerunning install cannot replace it.
+    // so pulling newer Curie sources and rerunning install cannot replace it.
     match seed_env_if_missing(&root)? {
         EnvSeed::Preserved => ui.note("=== .env already exists; leaving it untouched ==="),
         EnvSeed::Created => ui.note("=== seeded .env from .env.example ==="),
@@ -502,7 +502,7 @@ pub async fn install(update: bool) -> Result<()> {
     // into target/debug. `install` should make the CLI it builds LIVE -- like
     // `npm i` reconciling to the manifest -- so re-running it after a code change
     // refreshes what the user actually runs, instead of silently leaving a stale
-    // on-PATH binary. `agentos update` is the fast CLI-only subset of this.
+    // on-PATH binary. `curie update` is the fast CLI-only subset of this.
     require_tool("cargo", "cargo is not installed - https://rustup.rs/")?;
     run_step(
         &root,
@@ -523,13 +523,13 @@ pub async fn install(update: bool) -> Result<()> {
         build(runner_image).await?;
     }
 
-    ui.success("Setup complete. Start the stack with: agentos local up");
+    ui.success("Setup complete. Start the stack with: curie local up");
     Ok(())
 }
 
-/// `agentos update`: rebuild the CLI from this source checkout and reinstall it
+/// `curie update`: rebuild the CLI from this source checkout and reinstall it
 /// on PATH (`cargo install --path cli --force` -> ~/.cargo/bin), so a code change
-/// is picked up on the next `agentos` invocation without re-running the bootstrap
+/// is picked up on the next `curie` invocation without re-running the bootstrap
 /// script. Optionally rebuilds the local runner image too. Source-checkout only,
 /// like `install` -- a release binary has no source to rebuild from. Replacing the
 /// running binary is safe: the current process keeps running from the old inode
@@ -542,10 +542,10 @@ pub async fn update(image: bool) -> Result<()> {
     // not built here (#443 review).
     let root = find_repo_root().ok_or_else(|| {
         crate::exit::usage(
-            "`agentos update` rebuilds the CLI from a source checkout, but this binary is not \
-             running inside one.\n  - From a git clone: run `agentos update` from the repo.\n  \
-             - Installed from a GitHub release: download the latest agentos-<target> asset from \
-             https://github.com/curie-eng/agentos/releases and replace this binary (updating a \
+            "`curie update` rebuilds the CLI from a source checkout, but this binary is not \
+             running inside one.\n  - From a git clone: run `curie update` from the repo.\n  \
+             - Installed from a GitHub release: download the latest curie-<target> asset from \
+             https://github.com/curie-eng/curie/releases and replace this binary (updating a \
              released binary from the latest release is not built yet).",
         )
     })?;
@@ -560,7 +560,7 @@ pub async fn update(image: bool) -> Result<()> {
     if image {
         build(docker::RUNNER_IMAGE).await?;
     }
-    ui.success("agentos updated. The new binary is live on your next `agentos` invocation.");
+    ui.success("curie updated. The new binary is live on your next `curie` invocation.");
     Ok(())
 }
 
@@ -584,15 +584,15 @@ fn seed_env_if_missing(root: &Path) -> Result<EnvSeed> {
     Ok(EnvSeed::Created)
 }
 
-/// `agentos dev <script>`: run a repo dev script by relative path. Thin wrapper
+/// `curie dev <script>`: run a repo dev script by relative path. Thin wrapper
 /// -- finds the repo root, confirms the script exists, shells `bash <script>`
 /// from the root, streams its output, and propagates its exit code. A release
 /// binary has no scripts, so this errors clearly outside a checkout.
 pub async fn dev_script(rel_path: &str) -> Result<()> {
     let ui = crate::ui::ui();
     let root = find_repo_root().context(
-        "runner/Dockerfile not found here or in any parent directory. Run `agentos dev` \
-         from an agentos source checkout -- a release binary has no dev scripts.",
+        "runner/Dockerfile not found here or in any parent directory. Run `curie dev` \
+         from a curie source checkout -- a release binary has no dev scripts.",
     )?;
     let script = root.join(rel_path);
     if !script.is_file() {
@@ -611,14 +611,14 @@ pub async fn dev_script(rel_path: &str) -> Result<()> {
     Ok(())
 }
 
-/// `agentos list-agents`: list the plugin bundles under `agents/`, a personal,
+/// `curie list-agents`: list the plugin bundles under `agents/`, a personal,
 /// gitignored directory (sibling of `examples/`) for in-progress agent
-/// projects ready to hand to `agentos deploy-local <folder>`. A release binary has
+/// projects ready to hand to `curie deploy-local <folder>`. A release binary has
 /// no checkout to scan, so this errors clearly outside one, same as `dev_script`.
 pub async fn list_agents() -> Result<()> {
     let root = find_repo_root().context(
-        "runner/Dockerfile not found here or in any parent directory. Run `agentos list-agents` \
-         from an agentos source checkout.",
+        "runner/Dockerfile not found here or in any parent directory. Run `curie list-agents` \
+         from a curie source checkout.",
     )?;
     let bundles = crate::discover::discover_bundles(&root.join("agents"))?;
     crate::ui::ui().emit(&ListAgentsOutput {
@@ -674,13 +674,13 @@ impl crate::ui::CliOutput for ListAgentsOutput {
 }
 
 /// Resolve `agents/<folder>` under the repo root to a bundle directory for
-/// `agentos deploy-local <folder>`. Errors with the available folder names (from
+/// `curie deploy-local <folder>`. Errors with the available folder names (from
 /// `discover::discover_bundles`) when `folder` doesn't match one, so a typo
 /// doesn't dead-end without a next step.
 fn resolve_agent_folder(folder: &str) -> Result<std::path::PathBuf> {
     let root = find_repo_root().context(
-        "runner/Dockerfile not found here or in any parent directory. Run `agentos deploy-local` from \
-         an agentos source checkout.",
+        "runner/Dockerfile not found here or in any parent directory. Run `curie deploy-local` from \
+         a curie source checkout.",
     )?;
     let agents_root = root.join("agents");
     let dir = agents_root.join(folder);
@@ -691,7 +691,7 @@ fn resolve_agent_folder(folder: &str) -> Result<std::path::PathBuf> {
     if available.is_empty() {
         bail!(
             "no agent bundle named {folder:?} under agents/ (the directory has no bundles yet -- \
-             create one with `agentos init` inside agents/{folder})"
+             create one with `curie init` inside agents/{folder})"
         );
     }
     let names: Vec<String> = available
@@ -705,17 +705,17 @@ fn resolve_agent_folder(folder: &str) -> Result<std::path::PathBuf> {
     );
 }
 
-/// `agentos deploy-local <folder>`: shorthand for
-/// `agentos local deploy --plugin-dir agents/<folder>` -- same underlying
+/// `curie deploy-local <folder>`: shorthand for
+/// `curie local deploy --plugin-dir agents/<folder>` -- same underlying
 /// `deploy()` call, just resolved by name instead of a hand-typed path. Local
 /// tier only: cluster deploy's API-key discovery and port-forward
 /// self-plumbing (`main.rs`'s `ClusterAction::Deploy` arm) is not duplicated
-/// here; use `agentos cluster deploy --plugin-dir agents/<folder>` directly
+/// here; use `curie cluster deploy --plugin-dir agents/<folder>` directly
 /// for that tier.
 pub async fn deploy_named(folder: &str, opts: DeployNamedOpts) -> Result<DeployOutput> {
     let plugin_dir = resolve_agent_folder(folder)?;
     let connect_hint = format!(
-        "the platform API at {} is unreachable. Start the local stack first with `agentos local \
+        "the platform API at {} is unreachable. Start the local stack first with `curie local \
          up`, then re-run (or pass --api-url if your API is elsewhere).",
         opts.api_url
     );
@@ -733,7 +733,7 @@ pub async fn deploy_named(folder: &str, opts: DeployNamedOpts) -> Result<DeployO
     .await
 }
 
-/// The `agentos deploy-local <folder>` flags, mirroring `local deploy`'s minus
+/// The `curie deploy-local <folder>` flags, mirroring `local deploy`'s minus
 /// `plugin_dir` (resolved from `folder` instead).
 pub struct DeployNamedOpts {
     pub api_url: String,
@@ -744,7 +744,7 @@ pub struct DeployNamedOpts {
     pub secret: Vec<String>,
 }
 
-/// `agentos dev bump-version <X.Y.Z>`: set the release-coupled version across
+/// `curie dev bump-version <X.Y.Z>`: set the release-coupled version across
 /// cli/Cargo.toml + Chart.yaml version/appVersion in one shot, so a release cut
 /// cannot leave the three out of sync (the drift the #489 consistency gate
 /// catches). It rewrites ONLY the line-anchored release fields (never a
@@ -761,12 +761,12 @@ pub async fn bump_version(version: &str, dry_run: bool) -> Result<()> {
         )));
     }
     let root = find_repo_root().context(
-        "runner/Dockerfile not found here or in any parent directory. Run `agentos dev \
-         bump-version` from an agentos source checkout.",
+        "runner/Dockerfile not found here or in any parent directory. Run `curie dev \
+         bump-version` from a curie source checkout.",
     )?;
 
     let cargo_path = root.join("cli/Cargo.toml");
-    let chart_path = root.join("charts/agentos/Chart.yaml");
+    let chart_path = root.join("charts/curie/Chart.yaml");
     let cargo = std::fs::read_to_string(&cargo_path)
         .with_context(|| format!("reading {}", cargo_path.display()))?;
     let chart = std::fs::read_to_string(&chart_path)
@@ -789,9 +789,9 @@ pub async fn bump_version(version: &str, dry_run: bool) -> Result<()> {
         ui.emit(&crate::ui::DryRunPlan {
             lines: vec![
                 format!("cli/Cargo.toml: version = \"{version}\""),
-                format!("charts/agentos/Chart.yaml: version: {version}"),
-                format!("charts/agentos/Chart.yaml: appVersion: \"{version}\""),
-                "cargo update -p agentos (refresh Cargo.lock)".to_string(),
+                format!("charts/curie/Chart.yaml: version: {version}"),
+                format!("charts/curie/Chart.yaml: appVersion: \"{version}\""),
+                "cargo update -p curie (refresh Cargo.lock)".to_string(),
             ],
         });
         return Ok(());
@@ -802,14 +802,14 @@ pub async fn bump_version(version: &str, dry_run: bool) -> Result<()> {
     std::fs::write(&chart_path, chart_new)
         .with_context(|| format!("writing {}", chart_path.display()))?;
     ui.note(&format!(
-        "set version {version} in cli/Cargo.toml and charts/agentos/Chart.yaml"
+        "set version {version} in cli/Cargo.toml and charts/curie/Chart.yaml"
     ));
 
     // Refresh the CLI lockfile so the committed Cargo.lock matches the new crate
     // version. Best-effort: a missing cargo or offline registry must not fail the
     // bump (the fields are already written); warn and let the operator run it.
     let lock_ok = tokio::process::Command::new("cargo")
-        .args(["update", "-p", "agentos", "--precise", version])
+        .args(["update", "-p", "curie", "--precise", version])
         .current_dir(root.join("cli"))
         .status()
         .await
@@ -817,7 +817,7 @@ pub async fn bump_version(version: &str, dry_run: bool) -> Result<()> {
         .unwrap_or(false);
     if !lock_ok {
         ui.warn(
-            "could not refresh cli/Cargo.lock automatically; run `cargo update -p agentos` in cli/",
+            "could not refresh cli/Cargo.lock automatically; run `cargo update -p curie` in cli/",
         );
     }
 
@@ -936,12 +936,12 @@ fn find_repo_root() -> Option<PathBuf> {
 /// Pick the model-credential env vars to forward into the runner container, BY
 /// NAME (docker reads their values from the caller's env; no secret is put in
 /// argv). Mirrors the worker docker substrate's positive single-credential
-/// selection (apps/worker/src/agentos_worker/sandbox/docker.py:199-207), which is
+/// selection (apps/worker/src/curie_worker/sandbox/docker.py:199-207), which is
 /// the authority this function mirrors. Three states:
 /// - `fake_model`: forward NONE, and fake dominates every other state -- a fake
 ///   runner resolves no Anthropic credential, and a real token must not sit in an
 ///   untrusted, egress-rail-less container readable via /proc/1/environ.
-/// - an explicit non-empty AGENTOS_CREDENTIALS (`byo_credential`): the operator's
+/// - an explicit non-empty CURIE_CREDENTIALS (`byo_credential`): the operator's
 ///   chosen BYO credential, forwarded ALONE so an ambient SDK token can neither
 ///   shadow it nor ride into the sandbox. Kept under a `base_url_override` when it
 ///   is a provider key -- the runner routes an sk-or- OpenRouter key into
@@ -973,7 +973,7 @@ fn select_passthrough_env(
         if base_url_override && cred.starts_with(OAUTH_TOKEN_PREFIX) {
             return Vec::new();
         }
-        return vec!["AGENTOS_CREDENTIALS".into()];
+        return vec!["CURIE_CREDENTIALS".into()];
     }
     if base_url_override {
         return Vec::new();
@@ -987,7 +987,7 @@ fn select_passthrough_env(
 
 /// A Claude Code OAuth token shares the sk-ant- prefix with an API key; this more
 /// specific prefix marks it (issue #603). A literal mirror of
-/// runner/src/agentos_runner/sdk_auth.py::OAUTH_TOKEN_PREFIX, the authority for the
+/// runner/src/curie_runner/sdk_auth.py::OAUTH_TOKEN_PREFIX, the authority for the
 /// prefix semantics, and of the worker lane's `_OAUTH_TOKEN_PREFIX`.
 const OAUTH_TOKEN_PREFIX: &str = "sk-ant-oat";
 
@@ -1024,7 +1024,7 @@ fn secret_store_env(name: &str) -> Result<Option<(String, String)>> {
     }
     if let Some(value) = crate::secrets::get_value(name)? {
         crate::ui::ui().note(&format!(
-            "{name}: loaded from AgentOS private storage for this run"
+            "{name}: loaded from Curie private storage for this run"
         ));
         return Ok(Some((name.to_string(), value)));
     }
@@ -1044,9 +1044,9 @@ fn ambient_present_for(docker_env: &[(String, String)]) -> impl Fn(&str) -> bool
 }
 
 fn load_model_credentials_from_secret_store() -> Result<Vec<(String, String)>> {
-    // Prefer an explicitly BYO AgentOS credential when saved, otherwise hydrate
+    // Prefer an explicitly BYO Curie credential when saved, otherwise hydrate
     // the SDK credential names in the same order `select_passthrough_env` uses.
-    if let Some(pair) = secret_store_env("AGENTOS_CREDENTIALS")? {
+    if let Some(pair) = secret_store_env("CURIE_CREDENTIALS")? {
         return Ok(vec![pair]);
     }
     let mut env = Vec::new();
@@ -1060,11 +1060,11 @@ fn load_model_credentials_from_secret_store() -> Result<Vec<(String, String)>> {
 }
 
 /// The model-credential names, in the precedence order the vault loader uses
-/// (`AGENTOS_CREDENTIALS` dominates the SDK pair). These are the ONLY keys read
+/// (`CURIE_CREDENTIALS` dominates the SDK pair). These are the ONLY keys read
 /// from an opt-in `--env-file` (#749, ADR-0070); every other key in the dotfile
 /// is ignored, never absorbed into any process env.
 const MODEL_CREDENTIAL_ENV_NAMES: [&str; 3] = [
-    "AGENTOS_CREDENTIALS",
+    "CURIE_CREDENTIALS",
     "CLAUDE_CODE_OAUTH_TOKEN",
     "ANTHROPIC_API_KEY",
 ];
@@ -1091,7 +1091,7 @@ pub(crate) fn parse_credential_env_file(path: &Path) -> Result<Vec<(String, Stri
 /// already supplied (`is_present`: shell env OR vault). Pure, so the precedence
 /// (#749: shell env > vault > file) is unit-testable without touching the
 /// process env. Mirrors `load_model_credentials_from_secret_store`'s shape:
-/// `AGENTOS_CREDENTIALS` dominates and suppresses the SDK pair, matching
+/// `CURIE_CREDENTIALS` dominates and suppresses the SDK pair, matching
 /// `select_passthrough_env`'s byo branch.
 pub(crate) fn resolve_env_file_credentials(
     parsed: &[(String, String)],
@@ -1106,12 +1106,12 @@ pub(crate) fn resolve_env_file_credentials(
             .find(|(key, _)| key == name)
             .map(|(key, value)| (key.clone(), value.clone()))
     };
-    if let Some(pair) = take("AGENTOS_CREDENTIALS") {
+    if let Some(pair) = take("CURIE_CREDENTIALS") {
         return vec![pair];
     }
     // A BYO credential from a higher source dominates: the SDK pair is never
     // forwarded alongside it, so do not pull it from the file either.
-    if is_present("AGENTOS_CREDENTIALS") {
+    if is_present("CURIE_CREDENTIALS") {
         return Vec::new();
     }
     ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
@@ -1203,7 +1203,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     );
     if recorded_plan == RecordedStatePlan::Refuse {
         return Err(crate::exit::usage(format!(
-            "a local runner is already recorded in {}/.agentos/runner.json; run 'agentos skill down' there first",
+            "a local runner is already recorded in {}/.curie/runner.json; run 'curie skill down' there first",
             plugin_dir.display()
         )));
     }
@@ -1324,13 +1324,13 @@ pub async fn start(opts: StartOpts) -> Result<()> {
             load_model_credentials_from_env_file(opts.env_file.as_deref(), &docker_env)?;
         docker_env.extend(from_env_file);
     }
-    let byo_credential = std::env::var("AGENTOS_CREDENTIALS")
+    let byo_credential = std::env::var("CURIE_CREDENTIALS")
         .ok()
         .filter(|value| !value.is_empty())
         .or_else(|| {
-            stored_env_contains(&docker_env, "AGENTOS_CREDENTIALS").then_some("stored".to_string())
+            stored_env_contains(&docker_env, "CURIE_CREDENTIALS").then_some("stored".to_string())
         });
-    // Hydrate `--secret NAME` from AgentOS private storage when it is not
+    // Hydrate `--secret NAME` from Curie private storage when it is not
     // already present in the process env. The docker argv still forwards only
     // the NAME (`-e NAME`); the value is supplied only to the Docker CLI child
     // process so Docker can copy it into the runner container.
@@ -1340,7 +1340,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
                 Some(pair) => docker_env.push(pair),
                 None => {
                     crate::ui::ui().note(&format!(
-                        "--secret {name}: not set in the environment or AgentOS secret store; nothing will be forwarded for it"
+                        "--secret {name}: not set in the environment or Curie secret store; nothing will be forwarded for it"
                     ));
                 }
             }
@@ -1423,7 +1423,7 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     }
     step.done("healthy");
 
-    // State lives with the bundle: init gitignores .agentos/ there, and the
+    // State lives with the bundle: init gitignores .curie/ there, and the
     // follow-up commands are documented to run from the bundle directory. If
     // the save fails (e.g. a read-only bundle), tear the container down again:
     // a live runner with no recorded state would be invisible to stop/status.
@@ -1461,12 +1461,12 @@ pub async fn start(opts: StartOpts) -> Result<()> {
         ("Local bot", base_url),
         (
             "Skill message",
-            "agentos skill message \"<message>\"".to_string(),
+            "curie skill message \"<message>\"".to_string(),
         ),
-        ("Skill eval", "agentos skill eval".to_string()),
+        ("Skill eval", "curie skill eval".to_string()),
         ("Version", version),
     ];
-    ui.payload_plain(&boxed_summary("agentos dev environment", &rows));
+    ui.payload_plain(&boxed_summary("curie dev environment", &rows));
     if let Some(local_model) = &opts.local_model {
         ui.note(&format!(
             "local model running in container '{}' from '{}' with model '{}'",
@@ -1478,14 +1478,14 @@ pub async fn start(opts: StartOpts) -> Result<()> {
     let cwd = Path::new(".").canonicalize()?;
     if cwd != plugin_dir {
         ui.note(&format!(
-            "State recorded in {}/.agentos/runner.json; run skill down from that directory. skill message, skill eval, and skill status also work there. skill message and skill eval also accept --url.",
+            "State recorded in {}/.curie/runner.json; run skill down from that directory. skill message, skill eval, and skill status also work there. skill message and skill eval also accept --url.",
             plugin_dir.display()
         ));
     }
     Ok(())
 }
 
-/// What `agentos skill down` should tear down, resolved from the recorded state
+/// What `curie skill down` should tear down, resolved from the recorded state
 /// and an explicit `--name` (#747).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DownPlan {
@@ -1556,9 +1556,9 @@ pub fn plan_recorded_teardown(
     }
     RecordedTeardown::Hijacked {
         message: format!(
-            "the runner recorded in .agentos/runner.json is gone, and container '{container}' is now a different container ({live}); \
+            "the runner recorded in .curie/runner.json is gone, and container '{container}' is now a different container ({live}); \
 nothing was removed and the stale record has been cleared. \
-To remove the container currently holding that name, run 'agentos skill down --name {container}'"
+To remove the container currently holding that name, run 'curie skill down --name {container}'"
         ),
     }
 }
@@ -1585,9 +1585,9 @@ pub fn plan_skill_down(recorded: Option<&str>, requested: Option<&str>, exists: 
             } else {
                 DownPlan::Nothing {
                     message: format!(
-                        "no local runner recorded in .agentos/runner.json and no container named '{container}' is running; \
-run 'agentos skill down' from the bundle directory, \
-or name the container with 'agentos skill down --name <container>'"
+                        "no local runner recorded in .curie/runner.json and no container named '{container}' is running; \
+run 'curie skill down' from the bundle directory, \
+or name the container with 'curie skill down --name <container>'"
                     ),
                 }
             }
@@ -1612,7 +1612,7 @@ fn warn_if_not_cli_managed(
         return;
     }
     ui.warn(&format!(
-        "container '{container}' does not carry the {} label, so it may not be an AgentOS runner; removing it anyway",
+        "container '{container}' does not carry the {} label, so it may not be a Curie runner; removing it anyway",
         docker::CLI_MANAGED_LABEL
     ));
 }
@@ -1620,12 +1620,12 @@ fn warn_if_not_cli_managed(
 /// Said on every `--name` teardown that deliberately leaves the recorded runner
 /// running, so the two arms cannot drift apart.
 const RECORDED_RUNNER_LEFT_ALONE: &str =
-    "left the recorded runner in .agentos/runner.json alone; run 'agentos skill down' with no --name to stop it";
+    "left the recorded runner in .curie/runner.json alone; run 'curie skill down' with no --name to stop it";
 
 /// The note for a container that turned out to be gone before it was removed.
 ///
 /// `state_cleared` is the recorded path, which ALSO clears
-/// `.agentos/runner.json`; that half of the sentence is the user's only signal
+/// `.curie/runner.json`; that half of the sentence is the user's only signal
 /// that it did, so it is stated here once rather than left to each caller to
 /// remember (#747). Pure so the wording is testable.
 fn absent_container_note(container: &str, state_cleared: bool) -> String {
@@ -1706,7 +1706,7 @@ pub async fn stop(name: Option<String>) -> Result<()> {
             // No state file to clear, so the container IS the identity (#747).
             warn_if_not_cli_managed(&container, live.as_ref(), ui);
             remove_container_tolerating_absence(&container, &container, false, ui).await?;
-            ui.note("no .agentos/runner.json was present, so nothing to clear");
+            ui.note("no .curie/runner.json was present, so nothing to clear");
             Ok(())
         }
         DownPlan::Nothing { message } => bail!(message),
@@ -1718,7 +1718,7 @@ pub async fn stop(name: Option<String>) -> Result<()> {
     }
 }
 
-/// Tear down the runner recorded in `.agentos/runner.json`, plus the ollama
+/// Tear down the runner recorded in `.curie/runner.json`, plus the ollama
 /// sidecar, network and state file it owns.
 async fn stop_recorded(
     dir: &Path,
@@ -1775,7 +1775,7 @@ async fn stop_recorded(
     Ok(())
 }
 
-/// The `agentos skill status --json` payload: the runner base URL plus the
+/// The `curie skill status --json` payload: the runner base URL plus the
 /// serialized session status. Generic over the status shape so it serves both
 /// the frozen `SessionStatus` (contract test) and the runner's raw `/status`
 /// body (the live call site), which are both left unconstrained by
@@ -1805,7 +1805,7 @@ fn eval_counts(results: &[EvalRow]) -> (usize, usize, usize) {
     )
 }
 
-/// The `agentos skill eval --json` payload: the outcome roll-up plus one row per
+/// The `curie skill eval --json` payload: the outcome roll-up plus one row per
 /// case. Pure so it stays unit/contract-testable against
 /// `cli/schema/eval.schema.json`.
 pub fn eval_json(results: &[EvalRow]) -> serde_json::Value {
@@ -2057,7 +2057,7 @@ pub async fn eval(
 }
 
 /// Whether the runner `skill eval` is about to drive is the fake. Learned from
-/// `.agentos/runner.json` -- the CLI's own record of the runner IT booted, not a
+/// `.curie/runner.json` -- the CLI's own record of the runner IT booted, not a
 /// guess at the shell env.
 ///
 /// An explicit `--url` that is not the recorded runner points somewhere the
@@ -2126,7 +2126,7 @@ async fn run_suite_cases(
 /// Boot a throwaway runner for one model on `port`, forwarding the model
 /// credential and any `--secret` from the env or the host vault exactly like
 /// `skill up` (never in argv). Returns its base URL; the caller removes the
-/// container when done. Does NOT touch `.agentos/runner.json`, so a sweep never
+/// container when done. Does NOT touch `.curie/runner.json`, so a sweep never
 /// clobbers a persistent `skill up` runner's recorded state.
 async fn boot_eval_runner(
     plugin_dir: &Path,
@@ -2144,8 +2144,8 @@ async fn boot_eval_runner(
     // Real-model run: forward the model credential (env or vault) and the
     // bundle's --secret connector secrets, mirroring `start`'s resolution.
     let mut docker_env = load_model_credentials_from_secret_store()?;
-    let byo_credential = std::env::var("AGENTOS_CREDENTIALS").ok().or_else(|| {
-        stored_env_contains(&docker_env, "AGENTOS_CREDENTIALS").then_some("stored".to_string())
+    let byo_credential = std::env::var("CURIE_CREDENTIALS").ok().or_else(|| {
+        stored_env_contains(&docker_env, "CURIE_CREDENTIALS").then_some("stored".to_string())
     });
     for secret in secrets {
         if std::env::var_os(secret).is_none() && !stored_env_contains(&docker_env, secret) {
@@ -2278,7 +2278,7 @@ async fn eval_sweep(
     let cl = ui.checklist();
     let mut rows: Vec<SweepRow> = Vec::with_capacity(models.len());
     for (i, model) in models.iter().enumerate() {
-        let name = format!("agentos-eval-sweep-{i}");
+        let name = format!("curie-eval-sweep-{i}");
         let port = DEFAULT_PORT + 100 + i as u16;
         let step = cl.step(&format!("model {model}"));
         let url = match boot_eval_runner(&plugin_dir, image, port, &name, model, secrets).await {
@@ -2523,8 +2523,8 @@ impl crate::ui::CliOutput for EvalOutput<'_> {
 
 /// Where the eval cases live: an explicit `--cases` wins; otherwise
 /// `evals/cases.json` in the current directory, falling back to the started
-/// runner's recorded bundle directory (so `agentos skill eval` works from
-/// wherever `agentos skill up` was run).
+/// runner's recorded bundle directory (so `curie skill eval` works from
+/// wherever `curie skill up` was run).
 pub fn resolve_cases_path(
     explicit: Option<PathBuf>,
     cwd: &Path,
@@ -2575,7 +2575,7 @@ pub struct DeployOpts {
     pub secret_binding_supported: bool,
     /// Actionable remediation line printed when the platform API connection
     /// fails (e.g. the kubectl port-forward command for cluster, or
-    /// `agentos local up` for local). Naming the fix turns a raw
+    /// `curie local up` for local). Naming the fix turns a raw
     /// "Connection refused" into something the operator can act on.
     pub connect_hint: String,
 }
@@ -2587,7 +2587,7 @@ pub struct DeployOpts {
 ///
 /// Only WELL-FORMED, bindable names count as a gap: a declared name is diffed
 /// only when it passes `crate::secrets::validate_name`, the same env-var-syntax
-/// check (`^[A-Z_][A-Z0-9_]*$`) used for `agentos secrets set`. Malformed or
+/// check (`^[A-Z_][A-Z0-9_]*$`) used for `curie secrets set`. Malformed or
 /// reserved names are the plugin-format validator's responsibility (server-side
 /// on upload); the gate excludes them so it never preempts that real validation
 /// error with a misleading "bind `--secret <NAME>`" message. The reserved-name
@@ -2630,13 +2630,13 @@ pub fn deploy_port_forward(
 }
 
 /// True when `cluster deploy` must auto-discover the release Secret key: no
-/// explicit `--api-key`/`AGENTOS_API_KEY` was given. An explicit key wins and
+/// explicit `--api-key`/`CURIE_API_KEY` was given. An explicit key wins and
 /// skips discovery (ADR-0057).
 pub fn deploy_needs_key_discovery(explicit_api_key: Option<&str>) -> bool {
     explicit_api_key.is_none()
 }
 
-/// An empty `--api-key`/`AGENTOS_API_KEY=""` is absent, not a key: normalize
+/// An empty `--api-key`/`CURIE_API_KEY=""` is absent, not a key: normalize
 /// `Some("")` (after trim) to `None` so a blank value triggers discovery like
 /// an omitted flag instead of posting an empty key (401). Same empty-credential
 /// rule settled in `message::api_key_or_default` and
@@ -2654,7 +2654,7 @@ pub async fn deploy(opts: DeployOpts) -> Result<DeployOutput> {
     let label = opts
         .label
         .unwrap_or_else(|| format!("{manifest_version}-{}", unix_now()));
-    let created_by = std::env::var("USER").unwrap_or_else(|_| "agentos-cli".to_string());
+    let created_by = std::env::var("USER").unwrap_or_else(|_| "curie-cli".to_string());
 
     // Deploy-time secrets-policy gate (#464 / ADR-0009): every NAME the bundle's
     // manifest `secrets` policy declares must be in the operator's bound
@@ -2676,7 +2676,7 @@ pub async fn deploy(opts: DeployOpts) -> Result<DeployOutput> {
             return Err(crate::exit::usage(format!(
                 "{plugin_name} declares connector secret(s) that were not bound on deploy: {}. \
                  Bind each with `--secret <NAME>` (value read from the environment or from \
-                 `agentos secrets set <NAME>`).",
+                 `curie secrets set <NAME>`).",
                 unbound.join(", ")
             )));
         }
@@ -2709,8 +2709,8 @@ pub async fn deploy(opts: DeployOpts) -> Result<DeployOutput> {
             }
             None => {
                 return Err(crate::exit::usage(format!(
-                    "--secret {name}: not set in the environment and not saved in AgentOS \
-                     storage; export it or run `agentos secrets set {name}` first"
+                    "--secret {name}: not set in the environment and not saved in Curie \
+                     storage; export it or run `curie secrets set {name}` first"
                 )));
             }
         }
@@ -2892,13 +2892,13 @@ impl crate::ui::CliOutput for KillOutput {
             KillOutput::DryRun(plan) => plan.render(ui),
             KillOutput::Done { agent, killed } => {
                 ui.payload(&format!("agent {agent} killed (killed={killed})"));
-                ui.note("Run `agentos cluster resume <agent>` to bring it back.");
+                ui.note("Run `curie cluster resume <agent>` to bring it back.");
             }
         }
     }
 }
 
-/// `agentos cluster kill <agent> --yes`: flip the agent kill switch on
+/// `curie cluster kill <agent> --yes`: flip the agent kill switch on
 /// (`POST /agents/{id}/kill`). Destructive (it stops the agent's runs), so it
 /// refuses without `--yes`, mirroring `cluster down`. `--dry-run` returns the
 /// plan and makes no request.
@@ -2914,7 +2914,7 @@ pub async fn kill(opts: AgentActionOpts, yes: bool) -> Result<KillOutput> {
     }
     if !yes {
         return Err(crate::exit::CliError::usage(format!(
-            "`agentos cluster kill {}` stops the agent's runs; re-run with --yes to confirm",
+            "`curie cluster kill {}` stops the agent's runs; re-run with --yes to confirm",
             opts.agent
         ))
         .with_fix("re-run with --yes")
@@ -2968,7 +2968,7 @@ impl crate::ui::CliOutput for ResumeOutput {
     }
 }
 
-/// `agentos cluster resume <agent>`: flip the agent kill switch off
+/// `curie cluster resume <agent>`: flip the agent kill switch off
 /// (`POST /agents/{id}/resume`). Non-destructive, so no `--yes` gate.
 /// `--dry-run` returns the plan and makes no request.
 pub async fn resume(opts: AgentActionOpts) -> Result<ResumeOutput> {
@@ -3040,7 +3040,7 @@ impl crate::ui::CliOutput for BudgetOutput {
     }
 }
 
-/// `agentos cluster budget <agent> --limit <n>`: set the agent budget
+/// `curie cluster budget <agent> --limit <n>`: set the agent budget
 /// (`PUT /agents/{id}/budget`). `--limit` sets the daily spend cap
 /// (`max_usd_per_day`, the primary `BudgetConfig` field the console surfaces as
 /// "Max $/day"); the per-run token cap is left at the platform default.
@@ -3151,7 +3151,7 @@ const RESET_RELEASE_TIMEOUT: Duration = Duration::from_secs(45);
 /// How often `reset-thread` re-polls `GET .../reset` while waiting (#735).
 const RESET_RELEASE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-/// `agentos <tier> reset-thread <agent> --thread-key <key> --yes`: force the
+/// `curie <tier> reset-thread <agent> --thread-key <key> --yes`: force the
 /// thread's sandbox to be released (`POST
 /// /agents/{id}/threads/{thread_key}/reset`, #737). Interrupts a live turn on
 /// the thread first, so it refuses without `--yes`, mirroring `kill`.
@@ -3172,7 +3172,7 @@ pub async fn reset_thread(
     }
     if !yes {
         return Err(crate::exit::CliError::usage(format!(
-            "`agentos ... reset-thread {} --thread-key {}` interrupts any live turn on the thread; re-run with --yes to confirm",
+            "`curie ... reset-thread {} --thread-key {}` interrupts any live turn on the thread; re-run with --yes to confirm",
             opts.agent, thread_key
         ))
         .with_fix("re-run with --yes")
@@ -3246,7 +3246,7 @@ impl crate::ui::CliOutput for DeleteOutput {
     }
 }
 
-/// `agentos cluster delete <agent> --yes`: delete the agent
+/// `curie cluster delete <agent> --yes`: delete the agent
 /// (`DELETE /agents/{id}`). Destructive and irreversible, so it refuses without
 /// `--yes`, mirroring `cluster down`. `--dry-run` returns the plan and makes no
 /// request.
@@ -3262,7 +3262,7 @@ pub async fn delete(opts: AgentActionOpts, yes: bool) -> Result<DeleteOutput> {
     }
     if !yes {
         return Err(crate::exit::CliError::usage(format!(
-            "`agentos cluster delete {}` permanently deletes the agent; re-run with --yes to confirm",
+            "`curie cluster delete {}` permanently deletes the agent; re-run with --yes to confirm",
             opts.agent
         ))
         .with_fix("re-run with --yes")
@@ -3739,7 +3739,7 @@ pub async fn approvals(
     } else {
         // Report what the runner actually arms (#546): the UNION of the platform's
         // mutable `approval_required_tools` field (delivered as
-        // AGENTOS_APPROVAL_REQUIRED_TOOLS) AND the in-force deployed bundle
+        // CURIE_APPROVAL_REQUIRED_TOOLS) AND the in-force deployed bundle
         // manifest's `approvalPolicy` gates. Reading only the API field reported an
         // empty set while a manifest gate was armed and blocking.
         //
@@ -3767,7 +3767,7 @@ pub async fn approvals(
 }
 
 /// `local observability`: print the local platform's observability surfaces --
-/// the AgentOS Console, the Langfuse UI, and the API base -- resolved through the
+/// the Curie Console, the Langfuse UI, and the API base -- resolved through the
 /// shared tier-aware endpoint seam (`crate::observability`).
 ///
 /// `ObservabilityOutput` moved to `crate::observability` (#460) so both tiers
@@ -3784,7 +3784,7 @@ pub async fn observability(open: bool) -> Result<crate::observability::Observabi
     crate::observability::open_endpoints(&surfaces, open, ui.json()).await;
     // A hint, not payload: `observability` never checks whether the stack is
     // up, so this is stderr guidance rather than a claim about what happened.
-    ui.note("start these surfaces with `agentos local up` if they are unreachable");
+    ui.note("start these surfaces with `curie local up` if they are unreachable");
     Ok(crate::observability::ObservabilityOutput::Surfaces(
         surfaces,
     ))
@@ -3843,7 +3843,7 @@ async fn git_short_sha(dir: &Path) -> Option<String> {
 // --- skill tier parity (issue #459) -----------------------------------------
 
 /// The env var the runner reads for the operator's approval-gate override.
-const APPROVAL_TOOLS_ENV: &str = "AGENTOS_APPROVAL_REQUIRED_TOOLS";
+const APPROVAL_TOOLS_ENV: &str = "CURIE_APPROVAL_REQUIRED_TOOLS";
 
 /// The manifest locations the runner's `load_approval_policy` probes, in order.
 const MANIFEST_LOCATIONS: [&str; 2] = [".claude-plugin/plugin.json", "plugin.json"];
@@ -3899,7 +3899,7 @@ struct ApprovalPolicyDecl {
 /// `resolve_approval_policy` promotes to full-manifest validation (ADR-0041
 /// decision 1). That is schema-driven, not a hand-mirror of every
 /// `PluginManifest` field, so it tracks the frozen contract with no manual
-/// upkeep here. `cli/plugin-format-mirrors.json` + `agentos dev field-parity`
+/// upkeep here. `cli/plugin-format-mirrors.json` + `curie dev field-parity`
 /// (which now also runs `cli/tests/plugin_format_field_parity.rs`) separately
 /// gate that THIS struct's own fields (and its sibling mirrors in
 /// `cli/src/spec.rs`) stay honest about which `plugin_format` fields they
@@ -4046,13 +4046,13 @@ fn human_env_line(env: &str) -> String {
 /// The human summary line for `skill approvals`' gate view.
 ///
 /// Scoped to what this command actually knows: it reads the bundle on disk and
-/// nothing else. The runner also unions in `AGENTOS_APPROVAL_REQUIRED_TOOLS`,
+/// nothing else. The runner also unions in `CURIE_APPROVAL_REQUIRED_TOOLS`,
 /// resolved once at container boot and invisible from here, so neither branch may
 /// present the bundle's gates as the complete effective set. Saying "no gates
 /// declared, so calls run without approval" would be flatly false against a runner
 /// booted with that override set.
 fn gates_summary_line(gates: &[(String, String)]) -> String {
-    let unseen = "an AGENTOS_APPROVAL_REQUIRED_TOOLS override applied at container boot may gate more, and is not visible from the bundle";
+    let unseen = "a CURIE_APPROVAL_REQUIRED_TOOLS override applied at container boot may gate more, and is not visible from the bundle";
     if gates.is_empty() {
         format!("the bundle declares no approval gates ({unseen})")
     } else {
@@ -4268,7 +4268,7 @@ fn shell_quote(value: &str) -> String {
 /// clears the runner's override.
 ///
 /// Unlike the `local`/`cluster` tiers there is no platform record to PATCH: this
-/// tier's runner resolves `AGENTOS_APPROVAL_REQUIRED_TOOLS` once at container
+/// tier's runner resolves `CURIE_APPROVAL_REQUIRED_TOOLS` once at container
 /// boot. So set/clear mutate nothing and instead hand back the assignment plus
 /// the two caveats that make it honest (issue #459).
 pub async fn skill_approvals(
@@ -4338,7 +4338,7 @@ pub async fn skill_approvals(
         //    path in shell text) tells a caller working elsewhere which bundle
         //    this output is about.
         restart: format!(
-            "env resolves once at container boot, so nothing changes until the runner re-boots. This output is about the bundle at {}. To apply it: export the assignment above, then re-run your own original `agentos skill up` invocation for that bundle with `--secret {APPROVAL_TOOLS_ENV}` added -- a plain `agentos skill up` does not forward it. This command cannot see how that runner was started, so re-run your invocation rather than a fresh one, which would boot on defaults and drop your other flags. Stop an already-recorded runner first with `agentos skill down`, run from that bundle directory (it takes no --plugin-dir and acts on the bundle in the current directory).",
+            "env resolves once at container boot, so nothing changes until the runner re-boots. This output is about the bundle at {}. To apply it: export the assignment above, then re-run your own original `curie skill up` invocation for that bundle with `--secret {APPROVAL_TOOLS_ENV}` added -- a plain `curie skill up` does not forward it. This command cannot see how that runner was started, so re-run your invocation rather than a fresh one, which would boot on defaults and drop your other flags. Stop an already-recorded runner first with `curie skill down`, run from that bundle directory (it takes no --plugin-dir and acts on the bundle in the current directory).",
             shell_quote(&plugin_dir.display().to_string())
         ),
         // The runner UNIONS the bundle's declared gates with this env override,
@@ -4365,13 +4365,13 @@ pub const VERSIONS_REASON: &str =
     "`skill up` runs the bundle bytes on disk, so no deployed version is assigned";
 /// Where to run `versions` instead.
 pub const VERSIONS_ALT: &str =
-    "use `agentos local versions <agent>` or `agentos cluster versions <agent>` for a deployed agent";
+    "use `curie local versions <agent>` or `curie cluster versions <agent>` for a deployed agent";
 /// Why `skill memory` cannot be answered at this tier.
 pub const MEMORY_REASON: &str =
     "this tier configures no memory namespace: `skill up` never sets a memory ref, and there is no platform here to own or address one";
 /// Where to run `memory` instead.
 pub const MEMORY_ALT: &str =
-    "use `agentos local memory <agent>` or `agentos cluster memory <agent>` for a deployed agent";
+    "use `curie local memory <agent>` or `curie cluster memory <agent>` for a deployed agent";
 
 /// `skill versions`: answered, but unavailable at this tier by construction.
 ///
@@ -4386,12 +4386,12 @@ pub fn skill_versions_unavailable() -> anyhow::Error {
 ///
 /// Memory is a namespace some *platform* provisions, addresses, and owns; the
 /// `local`/`cluster` tiers have one, and this tier has none. `skill up` never
-/// sets `AGENTOS_MEMORY_REF`, so the runner it boots resolves a
+/// sets `CURIE_MEMORY_REF`, so the runner it boots resolves a
 /// `NullMemoryStore` and nothing is persisted.
 ///
 /// Deliberately NOT phrased as "cannot exist by construction". `--secret` has no
 /// reserved-name fence (`merge_secret_env`), so an operator CAN hand-forward
-/// `--secret AGENTOS_MEMORY_REF --secret AGENTOS_MEMORY_TOKEN` and the runner's
+/// `--secret CURIE_MEMORY_REF --secret CURIE_MEMORY_TOKEN` and the runner's
 /// `resolve_memory` will dereference an `http(s)://` ref into a real
 /// `StateApiMemoryStore`. That escape hatch is an operator wiring a foreign
 /// tier's namespace through this one by hand -- not this tier growing the
@@ -4408,7 +4408,7 @@ pub const APPROVALS_LIST_REASON: &str =
     "`skill message` talks straight to the local runner, bypassing the worker, Valkey, and the durable-Approval + resume machinery (ADR-0063), so the skill tier keeps no durable approval record to list or resolve";
 /// Where to list/resolve durable approvals instead.
 pub const APPROVALS_LIST_ALT: &str =
-    "use `agentos local approvals <agent> --list`/`--resolve` or `agentos cluster approvals <agent> --list`/`--resolve` for a deployed agent, or resolve the gate within the same `skill message` session";
+    "use `curie local approvals <agent> --list`/`--resolve` or `curie cluster approvals <agent> --list`/`--resolve` for a deployed agent, or resolve the gate within the same `skill message` session";
 
 /// `skill approvals --list`/`--resolve`: answered, but unavailable at this tier
 /// by construction (ADR-0077). The bundle's gate config (view/set/clear) still
@@ -4469,20 +4469,20 @@ mod tests {
     }
 
     #[test]
-    fn env_file_agentos_credential_dominates_the_sdk_pair() {
+    fn env_file_curie_credential_dominates_the_sdk_pair() {
         let parsed = vec![
-            ("AGENTOS_CREDENTIALS".to_string(), "byo-file".to_string()),
+            ("CURIE_CREDENTIALS".to_string(), "byo-file".to_string()),
             ("ANTHROPIC_API_KEY".to_string(), "sk-file".to_string()),
         ];
-        // The file's AGENTOS_CREDENTIALS wins and is returned alone.
+        // The file's CURIE_CREDENTIALS wins and is returned alone.
         let none = |_: &str| false;
         assert_eq!(
             resolve_env_file_credentials(&parsed, &none),
-            vec![("AGENTOS_CREDENTIALS".to_string(), "byo-file".to_string())]
+            vec![("CURIE_CREDENTIALS".to_string(), "byo-file".to_string())]
         );
         // A BYO credential from a higher source dominates -> nothing from the
-        // file (the SDK pair never rides alongside AGENTOS_CREDENTIALS).
-        let byo_present = |name: &str| name == "AGENTOS_CREDENTIALS";
+        // file (the SDK pair never rides alongside CURIE_CREDENTIALS).
+        let byo_present = |name: &str| name == "CURIE_CREDENTIALS";
         assert!(resolve_env_file_credentials(&parsed, &byo_present).is_empty());
     }
 
@@ -4493,13 +4493,13 @@ mod tests {
         std::fs::write(
             &path,
             "ANTHROPIC_API_KEY=sk-real\n\
-             AGENTOS_CREDENTIALS=\n\
+             CURIE_CREDENTIALS=\n\
              UNRELATED=leaked\n\
              CLAUDE_CODE_OAUTH_TOKEN=oat-real\n",
         )
         .unwrap();
         let parsed = parse_credential_env_file(&path).unwrap();
-        // Recognized + non-empty only: the empty AGENTOS_CREDENTIALS and the
+        // Recognized + non-empty only: the empty CURIE_CREDENTIALS and the
         // UNRELATED key are dropped, never absorbed (#749/#540).
         assert_eq!(
             parsed,
@@ -4516,7 +4516,7 @@ mod tests {
 
     #[test]
     fn parse_credential_env_file_errors_on_a_missing_file() {
-        let err = parse_credential_env_file(Path::new("/no/such/agentos/env/file")).unwrap_err();
+        let err = parse_credential_env_file(Path::new("/no/such/curie/env/file")).unwrap_err();
         assert!(err.to_string().contains("--env-file"), "{err}");
     }
 
@@ -4589,11 +4589,11 @@ mod tests {
         // name was unrecoverable with --replace: the record refused the boot
         // before the preflight could remove anything (#747).
         assert_eq!(
-            plan_recorded_state(Some("agentos-runner-local"), "agentos-runner-local", true),
+            plan_recorded_state(Some("curie-runner-local"), "curie-runner-local", true),
             RecordedStatePlan::ClearAndProceed
         );
         assert_eq!(
-            plan_recorded_state(None, "agentos-runner-local", false),
+            plan_recorded_state(None, "curie-runner-local", false),
             RecordedStatePlan::Proceed
         );
     }
@@ -4603,28 +4603,28 @@ mod tests {
         // Removing one container is no reason to forget another: a record for a
         // different, still-live runner keeps refusing, with or without --replace.
         assert_eq!(
-            plan_recorded_state(Some("agentos-runner-local"), "agentos-example-42", true),
+            plan_recorded_state(Some("curie-runner-local"), "curie-example-42", true),
             RecordedStatePlan::Refuse
         );
         assert_eq!(
-            plan_recorded_state(Some("agentos-runner-local"), "agentos-runner-local", false),
+            plan_recorded_state(Some("curie-runner-local"), "curie-runner-local", false),
             RecordedStatePlan::Refuse
         );
     }
 
     #[test]
     fn an_absent_container_note_says_the_stale_state_was_cleared() {
-        // Only the recorded path clears `.agentos/runner.json`, and this sentence
+        // Only the recorded path clears `.curie/runner.json`, and this sentence
         // is the user's only signal that it did, so the two notes are NOT
         // interchangeable (#747).
         assert_eq!(
-            absent_container_note("agentos-runner-local", true),
-            "container 'agentos-runner-local' was already gone; cleared stale state"
+            absent_container_note("curie-runner-local", true),
+            "container 'curie-runner-local' was already gone; cleared stale state"
         );
         // The --name paths clear nothing, so they must not claim to.
         assert_eq!(
-            absent_container_note("agentos-example-42", false),
-            "container 'agentos-example-42' was already gone"
+            absent_container_note("curie-example-42", false),
+            "container 'curie-example-42' was already gone"
         );
     }
 
@@ -4637,7 +4637,7 @@ mod tests {
         assert_eq!(
             plan_recorded_teardown(
                 "9f2c1d3e4b5a6c7d8e9f0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f",
-                "agentos-runner-local",
+                "curie-runner-local",
                 Some("9f2c1d3e4b5a")
             ),
             RecordedTeardown::Remove {
@@ -4646,7 +4646,7 @@ mod tests {
         );
         // Nothing holds the name: no removal to claim, the record still clears.
         assert_eq!(
-            plan_recorded_teardown("9f2c1d3e4b5a", "agentos-runner-local", None),
+            plan_recorded_teardown("9f2c1d3e4b5a", "curie-runner-local", None),
             RecordedTeardown::AlreadyGone
         );
     }
@@ -4658,17 +4658,17 @@ mod tests {
         // destroy it just because the name still matches (#747).
         let plan = plan_recorded_teardown(
             "aaaa1111bbbb2222",
-            "agentos-runner-local",
+            "curie-runner-local",
             Some("cccc3333dddd"),
         );
         let RecordedTeardown::Hijacked { message } = plan else {
             panic!("a different container holding the recorded name must not be removed");
         };
-        assert!(message.contains("agentos-runner-local"), "{message}");
+        assert!(message.contains("curie-runner-local"), "{message}");
         assert!(message.contains("cccc3333dddd"), "{message}");
         assert!(message.contains("nothing was removed"), "{message}");
         assert!(
-            message.contains("agentos skill down --name agentos-runner-local"),
+            message.contains("curie skill down --name curie-runner-local"),
             "{message}"
         );
     }
@@ -4676,27 +4676,23 @@ mod tests {
     #[test]
     fn skill_down_removes_the_recorded_runner() {
         assert_eq!(
-            plan_skill_down(Some("agentos-runner-local"), None, false),
+            plan_skill_down(Some("curie-runner-local"), None, false),
             DownPlan::Recorded {
-                container: "agentos-runner-local".into()
+                container: "curie-runner-local".into()
             }
         );
     }
 
     #[test]
     fn skill_down_targets_a_name_that_is_not_the_recorded_runner() {
-        // Only `Recorded` clears `.agentos/runner.json`. An explicit --name that
+        // Only `Recorded` clears `.curie/runner.json`. An explicit --name that
         // disagrees with the record is a targeted removal, so the still-running
         // recorded runner keeps its state file, ollama container, and network
         // instead of being silently orphaned (#747).
         assert_eq!(
-            plan_skill_down(
-                Some("agentos-runner-local"),
-                Some("agentos-example-42"),
-                true
-            ),
+            plan_skill_down(Some("curie-runner-local"), Some("curie-example-42"), true),
             DownPlan::Targeted {
-                container: "agentos-example-42".into()
+                container: "curie-example-42".into()
             }
         );
     }
@@ -4707,15 +4703,11 @@ mod tests {
         // real teardown from a no-op. Absence has to come from the probe, or the
         // verb reports "stopped and removed" for a container that was never
         // there (#747). Still not an error -- just not a removal.
-        let plan = plan_skill_down(
-            Some("agentos-runner-local"),
-            Some("agentos-747-absent"),
-            false,
-        );
+        let plan = plan_skill_down(Some("curie-runner-local"), Some("curie-747-absent"), false);
         assert_eq!(
             plan,
             DownPlan::TargetedAbsent {
-                container: "agentos-747-absent".into()
+                container: "curie-747-absent".into()
             }
         );
         // The only variants that report a removal are the ones that do one.
@@ -4731,12 +4723,12 @@ mod tests {
         // teardown, not a targeted removal that would strand the record.
         assert_eq!(
             plan_skill_down(
-                Some("agentos-runner-local"),
-                Some("agentos-runner-local"),
+                Some("curie-runner-local"),
+                Some("curie-runner-local"),
                 false
             ),
             DownPlan::Recorded {
-                container: "agentos-runner-local".into()
+                container: "curie-runner-local".into()
             }
         );
     }
@@ -4748,13 +4740,13 @@ mod tests {
         assert_eq!(
             plan_skill_down(None, None, true),
             DownPlan::Orphan {
-                container: "agentos-runner-local".into()
+                container: "curie-runner-local".into()
             }
         );
         assert_eq!(
-            plan_skill_down(None, Some("agentos-example-42"), true),
+            plan_skill_down(None, Some("curie-example-42"), true),
             DownPlan::Orphan {
-                container: "agentos-example-42".into()
+                container: "curie-example-42".into()
             }
         );
     }
@@ -4764,22 +4756,22 @@ mod tests {
         let DownPlan::Nothing { message } = plan_skill_down(None, None, false) else {
             panic!("no state and no container is nothing to remove");
         };
-        assert!(message.contains("agentos-runner-local"), "{message}");
-        assert!(message.contains(".agentos/runner.json"), "{message}");
+        assert!(message.contains("curie-runner-local"), "{message}");
+        assert!(message.contains(".curie/runner.json"), "{message}");
         assert!(message.contains("--name"), "{message}");
 
         let DownPlan::Nothing { message } =
-            plan_skill_down(None, Some("agentos-eval-sweep-0"), false)
+            plan_skill_down(None, Some("curie-eval-sweep-0"), false)
         else {
             panic!("no state and no container is nothing to remove");
         };
-        assert!(message.contains("agentos-eval-sweep-0"), "{message}");
+        assert!(message.contains("curie-eval-sweep-0"), "{message}");
     }
 
     #[test]
     fn replace_first_line_rewrites_only_the_first_anchored_line() {
         // The [package] version, not a dependency `version = ` line below it.
-        let cargo = "[package]\nname = \"agentos\"\nversion = \"0.4.0\"\n\n[dependencies]\nserde = { version = \"1\" }\n";
+        let cargo = "[package]\nname = \"curie\"\nversion = \"0.4.0\"\n\n[dependencies]\nserde = { version = \"1\" }\n";
         let out = replace_first_line(cargo, "version = ", "version = \"0.5.0\"").unwrap();
         assert!(out.contains("version = \"0.5.0\""));
         // The dependency's inline version is untouched.
@@ -4790,7 +4782,7 @@ mod tests {
 
     #[test]
     fn replace_first_line_preserves_indentation_and_reports_absence() {
-        let chart = "apiVersion: v2\nname: agentos\nappVersion: \"0.4.0\"\n";
+        let chart = "apiVersion: v2\nname: curie\nappVersion: \"0.4.0\"\n";
         let out = replace_first_line(chart, "appVersion:", "appVersion: \"0.5.0\"").unwrap();
         assert!(out.contains("appVersion: \"0.5.0\""));
         assert!(replace_first_line(chart, "nonexistent:", "x").is_none());
@@ -4962,7 +4954,7 @@ mod tests {
         // must not shadow the operator's chosen credential.
         assert_eq!(
             select_passthrough_env(false, false, Some("sk-or-x"), &all_ambient_present),
-            vec!["AGENTOS_CREDENTIALS".to_string()]
+            vec!["CURIE_CREDENTIALS".to_string()]
         );
     }
 
@@ -4984,7 +4976,7 @@ mod tests {
         // forwarded -- dropping it would break BYO OpenRouter (issue #603).
         assert_eq!(
             select_passthrough_env(false, true, Some("sk-or-x"), &all_ambient_present),
-            vec!["AGENTOS_CREDENTIALS".to_string()]
+            vec!["CURIE_CREDENTIALS".to_string()]
         );
     }
 
@@ -4994,13 +4986,13 @@ mod tests {
         // path an sk-ant-oat token is a valid credential and is forwarded alone.
         assert_eq!(
             select_passthrough_env(false, false, Some("sk-ant-oat-x"), &all_ambient_present),
-            vec!["AGENTOS_CREDENTIALS".to_string()]
+            vec!["CURIE_CREDENTIALS".to_string()]
         );
     }
 
     #[test]
     fn empty_byo_credential_falls_back_to_sdk_vars() {
-        // An empty AGENTOS_CREDENTIALS (a blank line in .env) is treated as unset,
+        // An empty CURIE_CREDENTIALS (a blank line in .env) is treated as unset,
         // so the ambient SDK vars carry the legacy real-Anthropic credential.
         assert_eq!(
             select_passthrough_env(false, false, Some(""), &all_ambient_present),
@@ -5162,7 +5154,7 @@ mod tests {
     async fn deploy_names_the_remediation_when_api_is_unreachable() {
         let dir = tempfile::tempdir().unwrap();
         crate::scaffold::scaffold(dir.path(), "test-agent").unwrap();
-        let hint = "kubectl -n agentos port-forward svc/agentos-api 8000:8000";
+        let hint = "kubectl -n curie port-forward svc/curie-api 8000:8000";
         let opts = super::DeployOpts {
             plugin_dir: dir.path().to_path_buf(),
             // port 1 is reserved/closed -> deterministic connection refused
@@ -5661,7 +5653,7 @@ mod tests {
 
     #[test]
     fn skill_approvals_render_never_claims_calls_are_ungated() {
-        // The bundle is not the effective policy: AGENTOS_APPROVAL_REQUIRED_TOOLS
+        // The bundle is not the effective policy: CURIE_APPROVAL_REQUIRED_TOOLS
         // is resolved at container boot and cannot be seen from here, so neither
         // branch may imply the listed gates are the complete set.
         let empty = super::gates_summary_line(&[]);
@@ -5670,12 +5662,12 @@ mod tests {
             "an empty bundle policy must not claim calls run without approval -- an env override may gate them: {empty}"
         );
         assert!(
-            empty.contains("AGENTOS_APPROVAL_REQUIRED_TOOLS"),
+            empty.contains("CURIE_APPROVAL_REQUIRED_TOOLS"),
             "the empty render must name the override it cannot see: {empty}"
         );
         let listed = super::gates_summary_line(&[("Bash".into(), "eng".into())]);
         assert!(
-            listed.contains("AGENTOS_APPROVAL_REQUIRED_TOOLS"),
+            listed.contains("CURIE_APPROVAL_REQUIRED_TOOLS"),
             "the non-empty render must not imply the listed gates are the complete effective set: {listed}"
         );
     }
@@ -5773,11 +5765,11 @@ mod tests {
         let json = out.to_json();
         assert_eq!(
             json["env"].as_str().unwrap(),
-            "AGENTOS_APPROVAL_REQUIRED_TOOLS=A,B"
+            "CURIE_APPROVAL_REQUIRED_TOOLS=A,B"
         );
         let restart = json["restart"].as_str().unwrap();
         assert!(
-            restart.contains("--secret AGENTOS_APPROVAL_REQUIRED_TOOLS"),
+            restart.contains("--secret CURIE_APPROVAL_REQUIRED_TOOLS"),
             "the restart caveat must name the --secret forwarding that actually applies the env, not a bare `skill up` (which forwards only model credentials): {restart}"
         );
         assert!(
@@ -5789,7 +5781,7 @@ mod tests {
             "the restart caveat must carry the caller's --plugin-dir so the re-boot targets the bundle whose approvals were read, not whatever bundle happens to be in the CWD: {restart}"
         );
         assert!(
-            restart.contains("agentos skill down"),
+            restart.contains("curie skill down"),
             "the restart caveat must name the stop-first step: `start` hard-errors when a runner is already recorded for the dir: {restart}"
         );
         let bundle_note = json["bundle_note"].as_str().unwrap();
@@ -5810,11 +5802,11 @@ mod tests {
         let json = out.to_json();
         assert_eq!(
             json["env"].as_str().unwrap(),
-            "AGENTOS_APPROVAL_REQUIRED_TOOLS="
+            "CURIE_APPROVAL_REQUIRED_TOOLS="
         );
         let restart = json["restart"].as_str().unwrap();
         assert!(
-            restart.contains("--secret AGENTOS_APPROVAL_REQUIRED_TOOLS"),
+            restart.contains("--secret CURIE_APPROVAL_REQUIRED_TOOLS"),
             "the clear path's restart caveat must name the --secret forwarding too: a bare `skill up` never forwards the cleared assignment either: {restart}"
         );
         assert!(
@@ -5822,7 +5814,7 @@ mod tests {
             "the clear path's restart caveat must carry the caller's --plugin-dir too, or the re-boot clears the override on the wrong bundle: {restart}"
         );
         assert!(
-            restart.contains("agentos skill down"),
+            restart.contains("curie skill down"),
             "the clear path's restart caveat must name the stop-first step too: {restart}"
         );
         let bundle_note = json["bundle_note"].as_str().unwrap();
@@ -5851,11 +5843,11 @@ mod tests {
             let json = out.to_json();
             let restart = json["restart"].as_str().unwrap();
             assert!(
-                !restart.contains("`agentos skill up --secret"),
+                !restart.contains("`curie skill up --secret"),
                 "the guidance must not synthesize a `skill up --secret ...` command line: this command cannot reconstruct the caller's original flags, so pasting it re-boots on defaults and drops their other --secret credentials (clear={clear}): {restart}"
             );
             assert!(
-                restart.contains("your own original `agentos skill up` invocation"),
+                restart.contains("your own original `curie skill up` invocation"),
                 "the guidance must direct the caller to re-run their own original invocation with the flag added (clear={clear}): {restart}"
             );
         }
@@ -5897,21 +5889,21 @@ mod tests {
         // value, not a shell literal it would have to unquote.
         assert_eq!(
             out.to_json()["env"].as_str().unwrap(),
-            "AGENTOS_APPROVAL_REQUIRED_TOOLS=Foo Bar"
+            "CURIE_APPROVAL_REQUIRED_TOOLS=Foo Bar"
         );
         assert_eq!(
-            super::human_env_line("AGENTOS_APPROVAL_REQUIRED_TOOLS=Foo Bar"),
-            "AGENTOS_APPROVAL_REQUIRED_TOOLS='Foo Bar'"
+            super::human_env_line("CURIE_APPROVAL_REQUIRED_TOOLS=Foo Bar"),
+            "CURIE_APPROVAL_REQUIRED_TOOLS='Foo Bar'"
         );
         assert_eq!(
-            super::human_env_line("AGENTOS_APPROVAL_REQUIRED_TOOLS=$(cmd)"),
-            "AGENTOS_APPROVAL_REQUIRED_TOOLS='$(cmd)'",
+            super::human_env_line("CURIE_APPROVAL_REQUIRED_TOOLS=$(cmd)"),
+            "CURIE_APPROVAL_REQUIRED_TOOLS='$(cmd)'",
             "shell syntax in a gate name must be quoted, not left to be substituted on paste"
         );
         // The cleared assignment still renders as an assignment to an empty value.
         assert_eq!(
-            super::human_env_line("AGENTOS_APPROVAL_REQUIRED_TOOLS="),
-            "AGENTOS_APPROVAL_REQUIRED_TOOLS=''"
+            super::human_env_line("CURIE_APPROVAL_REQUIRED_TOOLS="),
+            "CURIE_APPROVAL_REQUIRED_TOOLS=''"
         );
     }
 
@@ -5989,7 +5981,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             out.to_json()["env"].as_str().unwrap(),
-            "AGENTOS_APPROVAL_REQUIRED_TOOLS=A"
+            "CURIE_APPROVAL_REQUIRED_TOOLS=A"
         );
     }
 

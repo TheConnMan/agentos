@@ -1,4 +1,4 @@
-//! The `agentos` binary: `init`, `skill <up|down|status|message|eval|approvals>`
+//! The `curie` binary: `init`, `skill <up|down|status|message|eval|approvals>`
 //! for a local runner, `local <up|down|status|message|deploy>` for the compose stack,
 //! and `cluster <up|down|status|comms|message|deploy>` for Kubernetes and the
 //! platform API. Task I1; contracts are frozen in packages/aci-protocol and
@@ -6,21 +6,21 @@
 
 use std::path::PathBuf;
 
-use agentos::api;
-use agentos::artifacts;
-use agentos::commands::{
-    self, AgentActionOpts, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT,
-};
-use agentos::comms::{self, CommsOpts, LocalCommsOpts};
-use agentos::docker;
-use agentos::local::{self, LocalDownOpts, LocalOpts};
-use agentos::message::{self, MessageOpts};
-use agentos::ops::{self, CommonOpts, DownOpts, UpOpts};
-use agentos::secrets;
-use agentos::state::{apply_continue, load_turn, CliTurnArgs, TurnVerb};
-use agentos::ui::{self, ColorFlag, Ui};
 use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand};
+use curie::api;
+use curie::artifacts;
+use curie::commands::{
+    self, AgentActionOpts, DeployEnv, DeployOpts, SendType, StartOpts, DEFAULT_PORT,
+};
+use curie::comms::{self, CommsOpts, LocalCommsOpts};
+use curie::docker;
+use curie::local::{self, LocalDownOpts, LocalOpts};
+use curie::message::{self, MessageOpts};
+use curie::ops::{self, CommonOpts, DownOpts, UpOpts};
+use curie::secrets;
+use curie::state::{apply_continue, load_turn, CliTurnArgs, TurnVerb};
+use curie::ui::{self, ColorFlag, Ui};
 
 /// Per-tier defaults for the flags shared by the agent-target verbs. The only
 /// thing that differs between `local` and `cluster` is where the platform API
@@ -44,9 +44,9 @@ impl TierDefaults for LocalTier {
 struct AgentTarget<T: TierDefaults> {
     /// Agent name or id.
     agent: String,
-    #[arg(long, default_value = T::API_URL, env = "AGENTOS_API_URL")]
+    #[arg(long, default_value = T::API_URL, env = "CURIE_API_URL")]
     api_url: String,
-    #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+    #[arg(long, default_value = "curie-dev-key", env = "CURIE_API_KEY", value_parser = message::api_key_or_default)]
     api_key: String,
     #[arg(long)]
     dry_run: bool,
@@ -70,22 +70,22 @@ impl<T: TierDefaults> From<AgentTarget<T>> for AgentActionOpts {
 /// release serves the API through its UI `/api` NodePort proxy and randomizes
 /// `api.apiKey` at `cluster up` — so BOTH default to `None` and are DISCOVERED
 /// from the release (mirroring how `cluster deploy` already discovers the URL),
-/// rather than defaulting to `http://localhost:8000` + the `agentos-dev-key`
+/// rather than defaulting to `http://localhost:8000` + the `curie-dev-key`
 /// sentinel, which parse cleanly and then fail to connect / 401. An explicit
-/// `--api-url`/`--api-key` (or `AGENTOS_API_URL`/`AGENTOS_API_KEY`) still wins.
+/// `--api-url`/`--api-key` (or `CURIE_API_URL`/`CURIE_API_KEY`) still wins.
 #[derive(Args, Debug, Clone)]
 struct ClusterConn {
     /// Platform API base URL. Omit to discover the release's UI `/api` proxy.
-    #[arg(long, env = "AGENTOS_API_URL")]
+    #[arg(long, env = "CURIE_API_URL")]
     api_url: Option<String>,
     /// Platform API key. Omit to read the release's `api.apiKey` from its Secret.
-    #[arg(long, env = "AGENTOS_API_KEY")]
+    #[arg(long, env = "CURIE_API_KEY")]
     api_key: Option<String>,
-    /// Kubernetes namespace of the release. Default: agentos.
-    #[arg(long, default_value = "agentos")]
+    /// Kubernetes namespace of the release. Default: curie.
+    #[arg(long, default_value = "curie")]
     namespace: String,
-    /// Helm release name. Default: agentos.
-    #[arg(long, default_value = "agentos")]
+    /// Helm release name. Default: curie.
+    #[arg(long, default_value = "curie")]
     release: String,
 }
 
@@ -126,9 +126,9 @@ async fn resolve_cluster_conn(conn: ClusterConn) -> anyhow::Result<(String, Stri
 
 #[derive(Parser)]
 #[command(
-    name = "agentos",
+    name = "curie",
     version,
-    about = "AgentOS CLI: run `agentos` for the interactive terminal, or pass a subcommand for scripts"
+    about = "Curie CLI: run `curie` for the interactive terminal, or pass a subcommand for scripts"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -222,11 +222,11 @@ enum Command {
         #[arg(
             long,
             default_value = message::DEFAULT_LOCAL_API_URL,
-            env = "AGENTOS_API_URL"
+            env = "CURIE_API_URL"
         )]
         api_url: String,
         /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        #[arg(long, default_value = "curie-dev-key", env = "CURIE_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         /// Slack channel to bind the agent to. On first create it defaults to
         /// C0LOCALDEV; on redeploy it is only moved when you pass this flag, so
@@ -240,7 +240,7 @@ enum Command {
         #[arg(long)]
         label: Option<String>,
         /// Bind a per-agent connector secret by NAME (ADR-0009, #429). The value
-        /// is resolved from your environment or the host secret vault (`agentos
+        /// is resolved from your environment or the host secret vault (`curie
         /// secrets set <NAME>`) and sent to the platform. Repeatable.
         #[arg(long = "secret", value_name = "NAME")]
         secret: Vec<String>,
@@ -260,10 +260,10 @@ enum Command {
     ///
     /// From the repo root, runs (each idempotent, streaming output): copy
     /// `.env.example` to `.env` if missing, `uv sync`, `pnpm install` in
-    /// `apps/ui`, `cargo install --path cli` (builds AND puts `agentos` on PATH,
+    /// `apps/ui`, `cargo install --path cli` (builds AND puts `curie` on PATH,
     /// so re-running install refreshes the live CLI), then builds the runner
     /// image. With `--update`, already-present heavyweight artifacts like the
-    /// runner image are reused. `agentos update` is the fast CLI-only subset. A
+    /// runner image are reused. `curie update` is the fast CLI-only subset. A
     /// release binary has no source tree to install and errors clearly; a
     /// missing tool (uv/pnpm/cargo/docker) prints a pointer and stops.
     #[command(alias = "i")]
@@ -275,7 +275,7 @@ enum Command {
     /// Rebuild this CLI from the source checkout and reinstall it on PATH (source checkout only).
     ///
     /// The fast per-change refresh: runs `cargo install --path cli --force` from
-    /// the repo root so a code change to the CLI is live on the next `agentos`
+    /// the repo root so a code change to the CLI is live on the next `curie`
     /// invocation, without re-running the bootstrap script. Pass `--image` to
     /// also rebuild the local runner image (for `runner/` changes). A release
     /// binary cannot rebuild itself and errors clearly.
@@ -292,7 +292,7 @@ enum Command {
     /// memorizing the full command surface.
     #[command(alias = "ui", alias = "tui")]
     Interactive,
-    /// Store and manage local secrets in AgentOS private storage.
+    /// Store and manage local secrets in Curie private storage.
     Secrets {
         #[command(subcommand)]
         action: SecretsAction,
@@ -300,7 +300,7 @@ enum Command {
     /// Run a repo dev script (contracts, chart-check, e2e) -- source checkout only.
     ///
     /// Thin wrappers over the repo's dev scripts so contributors get a unified
-    /// `agentos <command>` surface; the scripts stay the implementation. A
+    /// `curie <command>` surface; the scripts stay the implementation. A
     /// release binary has no scripts and errors clearly.
     Dev {
         #[command(subcommand)]
@@ -319,7 +319,7 @@ enum Command {
     /// every agent-facing result family, the schema file it maps to, and its
     /// version. With a NAME (e.g. `kill`, or `kill.schema.json`), emits that
     /// schema. The schemas are embedded in the binary, so this works from a
-    /// released `agentos` with no source checkout (issue #634).
+    /// released `curie` with no source checkout (issue #634).
     SchemaIndex {
         /// The schema to print (short name like `kill`, or `kill.schema.json`).
         /// Omit to print the inventory index of all result schemas.
@@ -339,7 +339,7 @@ enum Command {
 enum DevAction {
     /// Check the frozen contracts (`bash scripts/check-contracts.sh`).
     Contracts,
-    /// Render-assert the Helm chart (`bash charts/agentos/ci/render-assertions.sh`).
+    /// Render-assert the Helm chart (`bash charts/curie/ci/render-assertions.sh`).
     ChartCheck,
     /// Run the scripted CLI end-to-end test (`bash cli/scripts/e2e.sh`).
     E2e,
@@ -393,7 +393,7 @@ enum DevAction {
 
 #[derive(Subcommand)]
 enum SecretsAction {
-    /// Save a secret in AgentOS private storage. Prompts with hidden input by default.
+    /// Save a secret in Curie private storage. Prompts with hidden input by default.
     Set {
         /// Environment-variable-style secret name, e.g. GITHUB_PERSONAL_ACCESS_TOKEN.
         name: String,
@@ -401,7 +401,7 @@ enum SecretsAction {
         #[arg(long)]
         from_env: Option<String>,
     },
-    /// List saved AgentOS secret names. Values are never printed.
+    /// List saved Curie secret names. Values are never printed.
     List,
     /// Remove a saved secret.
     Unset {
@@ -417,7 +417,7 @@ enum SkillAction {
         /// Plugin bundle directory.
         #[arg(long, default_value = ".")]
         plugin_dir: PathBuf,
-        /// Runner image. Default: version-pinned `ghcr.io/curie-eng/agentos-runner:<version>` on release builds; local `agentos-runner` on dev builds. Pass to override.
+        /// Runner image. Default: version-pinned `ghcr.io/curie-eng/curie-runner:<version>` on release builds; local `curie-runner` on dev builds. Pass to override.
         #[arg(long)]
         image: Option<String>,
         /// Host port for the local bot.
@@ -429,7 +429,7 @@ enum SkillAction {
         /// Use the runner's scripted fake model (offline; no credential).
         #[arg(long)]
         fake_model: bool,
-        /// Docker network to join (e.g. agentos_default for the dev stack).
+        /// Docker network to join (e.g. curie_default for the dev stack).
         #[arg(long)]
         network: Option<String>,
         /// OTLP endpoint for traces (e.g. http://otel-collector:4318).
@@ -438,7 +438,7 @@ enum SkillAction {
         /// ACI budget JSON for the session.
         #[arg(long, default_value = commands::DEFAULT_BUDGET)]
         budget: String,
-        /// Model id, forwarded as AGENTOS_MODEL. Omit for the SDK default.
+        /// Model id, forwarded as CURIE_MODEL. Omit for the SDK default.
         /// Setting it makes token usage attributable in Langfuse traces.
         #[arg(long)]
         model: Option<String>,
@@ -461,7 +461,7 @@ enum SkillAction {
         /// Opt-in: read a bundle-local `.env` (any dotenv path) as the LOWEST-
         /// priority model-credential source, so the bundle boots live with no
         /// `set -a; source .env` step. Precedence: shell env > stored secret
-        /// (`agentos secrets set`) > this file. Only AGENTOS_CREDENTIALS,
+        /// (`curie secrets set`) > this file. Only CURIE_CREDENTIALS,
         /// CLAUDE_CODE_OAUTH_TOKEN, and ANTHROPIC_API_KEY are read; every other
         /// key in the file is ignored (#749).
         #[arg(long = "env-file", value_name = "PATH")]
@@ -499,7 +499,7 @@ enum SkillAction {
         /// List pending approval RECORDS (not gate config). Accepted so it can be
         /// DECLINED with a reason at this tier rather than error like a typo: the
         /// skill tier's local runner keeps no durable approval store (ADR-0063,
-        /// ADR-0077). Use `agentos local/cluster approvals --list`.
+        /// ADR-0077). Use `curie local/cluster approvals --list`.
         #[arg(long)]
         list: bool,
         /// Resolve the approval with this id. Not available at the skill tier for
@@ -532,8 +532,8 @@ enum SkillAction {
     /// Stop and remove the local runner container.
     Down {
         /// Container name to remove. Defaults to the recorded runner, then to
-        /// `agentos-runner-local`. Pass it to clear a leftover container from a
-        /// directory with no `.agentos/runner.json`.
+        /// `curie-runner-local`. Pass it to clear a leftover container from a
+        /// directory with no `.curie/runner.json`.
         #[arg(long)]
         name: Option<String>,
     },
@@ -591,18 +591,18 @@ enum SkillAction {
     },
 }
 
-/// Subcommands of `agentos local`.
+/// Subcommands of `curie local`.
 #[derive(Subcommand)]
 enum LocalAction {
     /// Bring the dev stack up (`core` with `--minimal`, else `full`) and print URLs. Add `--slack` for the optional dispatcher.
     ///
-    /// Model parity with `agentos skill up`: `local up` runs the real model when a
+    /// Model parity with `curie skill up`: `local up` runs the real model when a
     /// model credential is present in the shell, and the offline fake model
     /// otherwise. Providers are first-class beyond Anthropic: an Anthropic key
     /// (`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`) OR the provider-agnostic
-    /// `AGENTOS_CREDENTIALS` (with `ANTHROPIC_BASE_URL` for an OpenAI-compatible
-    /// endpoint such as OpenRouter). Set `AGENTOS_FAKE_MODEL=1` to force the fake
-    /// even with a credential; set `AGENTOS_FAKE_MODEL=0` (or provide a
+    /// `CURIE_CREDENTIALS` (with `ANTHROPIC_BASE_URL` for an OpenAI-compatible
+    /// endpoint such as OpenRouter). Set `CURIE_FAKE_MODEL=1` to force the fake
+    /// even with a credential; set `CURIE_FAKE_MODEL=0` (or provide a
     /// credential) to go live.
     Up {
         /// Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override.
@@ -627,7 +627,7 @@ enum LocalAction {
         /// Opt-in: read a bundle-local `.env` (any dotenv path) as the LOWEST-
         /// priority model-credential source, so the compose stack boots live
         /// with no `set -a; source .env` step. Precedence: shell env > this
-        /// file. Only AGENTOS_CREDENTIALS, CLAUDE_CODE_OAUTH_TOKEN, and
+        /// file. Only CURIE_CREDENTIALS, CLAUDE_CODE_OAUTH_TOKEN, and
         /// ANTHROPIC_API_KEY are read; every other key in the file is ignored,
         /// and the value never reaches argv or logs (#749).
         #[arg(long = "env-file", value_name = "PATH")]
@@ -640,9 +640,9 @@ enum LocalAction {
     /// service to compose's fake-model/dev-stub defaults, because compose's
     /// `${VAR-default}` substitution reads THIS invocation's shell, not what the
     /// rest of the stack is running with -- export the same credential /
-    /// AGENTOS_FAKE_MODEL you want, same as `local up`.
+    /// CURIE_FAKE_MODEL you want, same as `local up`.
     Rebuild {
-        /// The compose service to rebuild, e.g. `agentos-worker`.
+        /// The compose service to rebuild, e.g. `curie-worker`.
         service: String,
         /// Compose file. Default: version-pinned `compose.release.yaml` from the remote on release builds; local `compose.dev.yaml` on dev builds. Pass to override.
         #[arg(short = 'f', long)]
@@ -745,16 +745,16 @@ enum LocalAction {
         #[arg(long)]
         thread: Option<String>,
         /// Reuse the last turn's context (channel, thread, transport) recorded
-        /// in .agentos/last-turn.json in the working directory; type only the
+        /// in .curie/last-turn.json in the working directory; type only the
         /// new message text.
         #[arg(long = "continue")]
         r#continue: bool,
         /// Valkey password (compose default `valkeypass`). Prefer the
-        /// AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the
+        /// CURIE_VALKEY_PASSWORD env var over passing a real secret on the
         /// command line, where it leaks via `ps` and shell history.
         #[arg(
             long,
-            env = "AGENTOS_VALKEY_PASSWORD",
+            env = "CURIE_VALKEY_PASSWORD",
             hide_env_values = true,
             default_value = message::DEFAULT_VALKEY_PASSWORD
         )]
@@ -763,13 +763,13 @@ enum LocalAction {
         #[arg(long)]
         api_url: Option<String>,
         /// Platform API key for the default-channel lookup.
-        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
+        #[arg(long, env = "CURIE_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Synthetic Slack user id for the enqueued event.
         #[arg(long, default_value = message::DEFAULT_USER)]
         user: String,
         /// Stream the dispatcher enqueues onto.
-        #[arg(long, env = "AGENTOS_STREAM", default_value = message::DEFAULT_STREAM)]
+        #[arg(long, env = "CURIE_STREAM", default_value = message::DEFAULT_STREAM)]
         stream: String,
         /// How long to wait for the worker's reply before printing diagnostics.
         /// Default: 300 seconds.
@@ -791,11 +791,11 @@ enum LocalAction {
         #[arg(long)]
         channel: Option<String>,
         /// Valkey password (compose default `valkeypass`). Prefer the
-        /// AGENTOS_VALKEY_PASSWORD env var over passing a real secret on the
+        /// CURIE_VALKEY_PASSWORD env var over passing a real secret on the
         /// command line, where it leaks via `ps` and shell history.
         #[arg(
             long,
-            env = "AGENTOS_VALKEY_PASSWORD",
+            env = "CURIE_VALKEY_PASSWORD",
             hide_env_values = true,
             default_value = message::DEFAULT_VALKEY_PASSWORD
         )]
@@ -804,13 +804,13 @@ enum LocalAction {
         #[arg(long)]
         api_url: Option<String>,
         /// Platform API key for the default-channel lookup.
-        #[arg(long, env = "AGENTOS_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
+        #[arg(long, env = "CURIE_API_KEY", default_value = message::DEFAULT_API_KEY, value_parser = message::api_key_or_default)]
         api_key: String,
         /// Synthetic Slack user id for the enqueued events.
         #[arg(long, default_value = message::DEFAULT_USER)]
         user: String,
         /// Stream the dispatcher enqueues onto.
-        #[arg(long, env = "AGENTOS_STREAM", default_value = message::DEFAULT_STREAM)]
+        #[arg(long, env = "CURIE_STREAM", default_value = message::DEFAULT_STREAM)]
         stream: String,
         /// How long to wait for each case's reply. Default: 300 seconds.
         #[arg(long, default_value_t = message::DEFAULT_TIMEOUT_SECS)]
@@ -838,11 +838,11 @@ enum LocalAction {
         #[arg(
             long,
             default_value = message::DEFAULT_LOCAL_API_URL,
-            env = "AGENTOS_API_URL"
+            env = "CURIE_API_URL"
         )]
         api_url: String,
         /// Platform API key.
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        #[arg(long, default_value = "curie-dev-key", env = "CURIE_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         /// Slack channel to bind the agent to. On first create it defaults to
         /// C0LOCALDEV; on redeploy it is only moved when you pass this flag, so
@@ -856,7 +856,7 @@ enum LocalAction {
         #[arg(long)]
         label: Option<String>,
         /// Bind a per-agent connector secret by NAME (ADR-0009, #429). The value
-        /// is resolved from your environment or the host secret vault (`agentos
+        /// is resolved from your environment or the host secret vault (`curie
         /// secrets set <NAME>`) and sent to the platform, which stores it on the
         /// agent so the worker forwards it into the sandbox for a bundle's authed
         /// MCP server. The value never appears in argv. Repeatable.
@@ -904,7 +904,7 @@ enum LocalAction {
         #[arg(long)]
         actor_channel: Option<String>,
     },
-    /// Show the local observability surfaces (AgentOS Console + Langfuse traces/cost + API base).
+    /// Show the local observability surfaces (Curie Console + Langfuse traces/cost + API base).
     Observability {
         /// Also open the browsable surfaces in a browser. Off by default: the URLs
         /// are printed and nothing is opened unless --open is passed, and --json
@@ -919,13 +919,9 @@ enum LocalAction {
         /// Daily spend cap in USD. Must be > 0.
         #[arg(long)]
         limit: f64,
-        #[arg(
-            long,
-            default_value = "http://localhost:28000",
-            env = "AGENTOS_API_URL"
-        )]
+        #[arg(long, default_value = "http://localhost:28000", env = "CURIE_API_URL")]
         api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        #[arg(long, default_value = "curie-dev-key", env = "CURIE_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         #[arg(long)]
         dry_run: bool,
@@ -934,13 +930,9 @@ enum LocalAction {
     Kill {
         /// Agent name or id.
         agent: String,
-        #[arg(
-            long,
-            default_value = "http://localhost:28000",
-            env = "AGENTOS_API_URL"
-        )]
+        #[arg(long, default_value = "http://localhost:28000", env = "CURIE_API_URL")]
         api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        #[arg(long, default_value = "curie-dev-key", env = "CURIE_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         /// Confirm the action.
         #[arg(long)]
@@ -952,13 +944,9 @@ enum LocalAction {
     Resume {
         /// Agent name or id.
         agent: String,
-        #[arg(
-            long,
-            default_value = "http://localhost:28000",
-            env = "AGENTOS_API_URL"
-        )]
+        #[arg(long, default_value = "http://localhost:28000", env = "CURIE_API_URL")]
         api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        #[arg(long, default_value = "curie-dev-key", env = "CURIE_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         #[arg(long)]
         dry_run: bool,
@@ -975,13 +963,9 @@ enum LocalAction {
         /// The thread key to reset (e.g. the Slack thread ts).
         #[arg(long, value_name = "THREAD_KEY")]
         thread_key: String,
-        #[arg(
-            long,
-            default_value = "http://localhost:28000",
-            env = "AGENTOS_API_URL"
-        )]
+        #[arg(long, default_value = "http://localhost:28000", env = "CURIE_API_URL")]
         api_url: String,
-        #[arg(long, default_value = "agentos-dev-key", env = "AGENTOS_API_KEY", value_parser = message::api_key_or_default)]
+        #[arg(long, default_value = "curie-dev-key", env = "CURIE_API_KEY", value_parser = message::api_key_or_default)]
         api_key: String,
         /// Confirm the action; it interrupts any live turn on the thread.
         #[arg(long)]
@@ -993,10 +977,10 @@ enum LocalAction {
 
 #[derive(Subcommand)]
 enum ClusterAction {
-    /// Install or upgrade the AgentOS release via Helm (helm upgrade --install).
+    /// Install or upgrade the Curie release via Helm (helm upgrade --install).
     /// By default it puts the UI and Langfuse on node ports for tailnet/LAN
     /// access; pass --no-expose to keep them ClusterIP-only. Set
-    /// AGENTOS_CREDENTIALS (an Anthropic API key; AGENTOS_MODEL_CREDENTIALS is a
+    /// CURIE_CREDENTIALS (an Anthropic API key; CURIE_MODEL_CREDENTIALS is a
     /// deprecated alias) to install with the real
     /// model; without it the install is sealed (fake model, canned replies). A
     /// real model is still unreachable behind the fail-closed sandbox until you
@@ -1004,18 +988,18 @@ enum ClusterAction {
     /// <CIDR> for a raw range).
     Up {
         /// Kubernetes namespace.
-        #[arg(long, default_value = "agentos")]
+        #[arg(long, default_value = "curie")]
         namespace: String,
         /// Helm release name.
-        #[arg(long, default_value = "agentos")]
+        #[arg(long, default_value = "curie")]
         release: String,
-        /// Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/agentos` on dev builds. Pass a path or ref to override.
+        /// Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/curie` on dev builds. Pass a path or ref to override.
         #[arg(long)]
         chart: Option<String>,
         /// Keep the UI and Langfuse services ClusterIP instead of NodePort.
         #[arg(long)]
         no_expose: bool,
-        /// Force the sealed fake-model install even when AGENTOS_CREDENTIALS
+        /// Force the sealed fake-model install even when CURIE_CREDENTIALS
         /// is set (dev/CI escape hatch); suppresses the fake-model warning.
         #[arg(long)]
         fake_model: bool,
@@ -1053,10 +1037,10 @@ enum ClusterAction {
     /// kubectl delete namespace). The agents.x-k8s.io CRDs are left in place.
     Down {
         /// Kubernetes namespace.
-        #[arg(long, default_value = "agentos")]
+        #[arg(long, default_value = "curie")]
         namespace: String,
         /// Helm release name.
-        #[arg(long, default_value = "agentos")]
+        #[arg(long, default_value = "curie")]
         release: String,
         /// Skip the interactive confirmation prompt.
         #[arg(long)]
@@ -1068,22 +1052,22 @@ enum ClusterAction {
     /// Report release health and access URLs (read-only: helm status + kubectl).
     Status {
         /// Kubernetes namespace.
-        #[arg(long, default_value = "agentos")]
+        #[arg(long, default_value = "curie")]
         namespace: String,
         /// Helm release name.
-        #[arg(long, default_value = "agentos")]
+        #[arg(long, default_value = "curie")]
         release: String,
         /// Print the read-only commands that would run and exit.
         #[arg(long)]
         dry_run: bool,
     },
-    /// Show the release's observability surfaces (AgentOS Console + Langfuse traces/cost + API base).
+    /// Show the release's observability surfaces (Curie Console + Langfuse traces/cost + API base).
     Observability {
         /// Kubernetes namespace.
-        #[arg(long, default_value = "agentos")]
+        #[arg(long, default_value = "curie")]
         namespace: String,
         /// Helm release name.
-        #[arg(long, default_value = "agentos")]
+        #[arg(long, default_value = "curie")]
         release: String,
         /// Print the read-only discovery commands that would run and exit.
         #[arg(long)]
@@ -1120,12 +1104,12 @@ enum ClusterAction {
         )]
         bot_token: String,
         /// Kubernetes namespace.
-        #[arg(long, default_value = "agentos")]
+        #[arg(long, default_value = "curie")]
         namespace: String,
         /// Helm release name.
-        #[arg(long, default_value = "agentos")]
+        #[arg(long, default_value = "curie")]
         release: String,
-        /// Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/agentos` on dev builds. Pass a path or ref to override.
+        /// Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/curie` on dev builds. Pass a path or ref to override.
         #[arg(long)]
         chart: Option<String>,
         /// Print the helm command that would run and exit without executing.
@@ -1146,17 +1130,17 @@ enum ClusterAction {
         #[arg(long)]
         thread: Option<String>,
         /// Reuse the last turn's context (channel, thread, transport) recorded
-        /// in .agentos/last-turn.json in the working directory; type only the
+        /// in .curie/last-turn.json in the working directory; type only the
         /// new message text.
         #[arg(long = "continue")]
         r#continue: bool,
-        /// Kubernetes namespace of the release. Default: agentos.
+        /// Kubernetes namespace of the release. Default: curie.
         #[arg(long)]
         namespace: Option<String>,
-        /// Helm release name. Default: agentos.
+        /// Helm release name. Default: curie.
         #[arg(long)]
         release: Option<String>,
-        /// Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/agentos` on dev builds. Pass a path or ref to override.
+        /// Helm chart. Default: the version-pinned chart release asset on release builds; local `charts/curie` on dev builds. Pass a path or ref to override.
         #[arg(long)]
         chart: Option<String>,
         /// Host the in-cluster worker uses to reach the stub. Omit to auto-detect
@@ -1170,12 +1154,12 @@ enum ClusterAction {
         #[arg(long, default_value_t = message::DEFAULT_VALKEY_LOCAL_PORT)]
         valkey_local_port: u16,
         /// Valkey password. Omit to read the release's own password from its
-        /// chart Secret. Prefer the AGENTOS_VALKEY_PASSWORD env var over passing
+        /// chart Secret. Prefer the CURIE_VALKEY_PASSWORD env var over passing
         /// a real secret on the command line, where it leaks via `ps` and shell
         /// history.
         #[arg(
             long,
-            env = "AGENTOS_VALKEY_PASSWORD",
+            env = "CURIE_VALKEY_PASSWORD",
             hide_env_values = true,
             value_parser = message::cluster_valkey_password
         )]
@@ -1185,13 +1169,13 @@ enum ClusterAction {
         api_local_port: u16,
         /// Platform API key for the default-channel lookup. Omit to read the
         /// release's own key from its chart Secret.
-        #[arg(long, env = "AGENTOS_API_KEY", value_parser = message::cluster_api_key)]
+        #[arg(long, env = "CURIE_API_KEY", value_parser = message::cluster_api_key)]
         api_key: Option<String>,
         /// Synthetic Slack user id for the enqueued event.
         #[arg(long, default_value = message::DEFAULT_USER)]
         user: String,
         /// Stream the dispatcher enqueues onto.
-        #[arg(long, env = "AGENTOS_STREAM", default_value = message::DEFAULT_STREAM)]
+        #[arg(long, env = "CURIE_STREAM", default_value = message::DEFAULT_STREAM)]
         stream: String,
         /// How long to wait for the worker's reply before printing diagnostics.
         /// Defaults high because the worker kernel can retry a run up to 3 times
@@ -1217,11 +1201,11 @@ enum ClusterAction {
         /// slack_channel. Omit to use the sole deployed agent's channel.
         #[arg(long)]
         channel: Option<String>,
-        /// Kubernetes namespace of the release. Default: agentos.
-        #[arg(long, default_value = "agentos")]
+        /// Kubernetes namespace of the release. Default: curie.
+        #[arg(long, default_value = "curie")]
         namespace: String,
-        /// Helm release name. Default: agentos.
-        #[arg(long, default_value = "agentos")]
+        /// Helm release name. Default: curie.
+        #[arg(long, default_value = "curie")]
         release: String,
         /// Host the in-cluster worker uses to reach the stub. Omit to auto-detect
         /// the local IP the kernel would use to reach the cluster.
@@ -1234,12 +1218,12 @@ enum ClusterAction {
         #[arg(long, default_value_t = message::DEFAULT_VALKEY_LOCAL_PORT)]
         valkey_local_port: u16,
         /// Valkey password. Omit to read the release's own password from its
-        /// chart Secret. Prefer the AGENTOS_VALKEY_PASSWORD env var over passing
+        /// chart Secret. Prefer the CURIE_VALKEY_PASSWORD env var over passing
         /// a real secret on the command line, where it leaks via `ps` and shell
         /// history.
         #[arg(
             long,
-            env = "AGENTOS_VALKEY_PASSWORD",
+            env = "CURIE_VALKEY_PASSWORD",
             hide_env_values = true,
             value_parser = message::cluster_valkey_password
         )]
@@ -1249,13 +1233,13 @@ enum ClusterAction {
         api_local_port: u16,
         /// Platform API key for the default-channel lookup. Omit to read the
         /// release's own key from its chart Secret.
-        #[arg(long, env = "AGENTOS_API_KEY", value_parser = message::cluster_api_key)]
+        #[arg(long, env = "CURIE_API_KEY", value_parser = message::cluster_api_key)]
         api_key: Option<String>,
         /// Synthetic Slack user id for the enqueued events.
         #[arg(long, default_value = message::DEFAULT_USER)]
         user: String,
         /// Stream the dispatcher enqueues onto.
-        #[arg(long, env = "AGENTOS_STREAM", default_value = message::DEFAULT_STREAM)]
+        #[arg(long, env = "CURIE_STREAM", default_value = message::DEFAULT_STREAM)]
         stream: String,
         /// How long to wait for each case's reply. Default: 300 seconds.
         #[arg(long, default_value_t = message::DEFAULT_TIMEOUT_SECS)]
@@ -1281,21 +1265,21 @@ enum ClusterAction {
         #[arg(long, default_value = ".")]
         plugin_dir: PathBuf,
         /// Platform API base URL. Omit to self-plumb a kubectl port-forward to
-        /// the release's api service (a loopback tunnel); AGENTOS_API_URL or an
+        /// the release's api service (a loopback tunnel); CURIE_API_URL or an
         /// explicit value direct-dials the given URL with no tunnel.
-        #[arg(long, env = "AGENTOS_API_URL")]
+        #[arg(long, env = "CURIE_API_URL")]
         api_url: Option<String>,
-        /// Kubernetes namespace of the release (for the port-forward + key discovery). Default: agentos.
-        #[arg(long, default_value = "agentos")]
+        /// Kubernetes namespace of the release (for the port-forward + key discovery). Default: curie.
+        #[arg(long, default_value = "curie")]
         namespace: String,
-        /// Helm release name (for the port-forward + key discovery). Default: agentos.
-        #[arg(long, default_value = "agentos")]
+        /// Helm release name (for the port-forward + key discovery). Default: curie.
+        #[arg(long, default_value = "curie")]
         release: String,
         /// Platform API key. Omit to auto-discover the release Secret key
         /// (`<release>-secrets`); the discovered key travels only in the
         /// X-API-Key header over the loopback tunnel, never over the cleartext
         /// NodePort proxy (ADR-0057). An explicit value wins.
-        #[arg(long, env = "AGENTOS_API_KEY", hide_env_values = true)]
+        #[arg(long, env = "CURIE_API_KEY", hide_env_values = true)]
         api_key: Option<String>,
         /// Slack channel to bind the agent to. On first create it defaults to
         /// C0LOCALDEV; on redeploy it is only moved when you pass this flag, so
@@ -1312,7 +1296,7 @@ enum ClusterAction {
         /// (#440): this flag is accepted only so it can be DECLINED with a reason
         /// instead of erroring like a typo. Until per-agent K8s Secret +
         /// secretKeyRef delivery lands, a value-only SandboxClaim CR would persist
-        /// the token in plaintext in etcd. Use `agentos local deploy --secret`
+        /// the token in plaintext in etcd. Use `curie local deploy --secret`
         /// today. See ADR-0009.
         #[arg(long = "secret")]
         secret: Vec<String>,
@@ -1467,9 +1451,9 @@ async fn materialize_artifact(
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(hint) = agentos::retired_hint(&args) {
+    if let Some(hint) = curie::retired_hint(&args) {
         eprintln!("{hint}");
-        std::process::exit(agentos::exit::ExitClass::Usage.code());
+        std::process::exit(curie::exit::ExitClass::Usage.code());
     }
 
     let cli = Cli::parse();
@@ -1479,9 +1463,9 @@ async fn main() {
     // code: the JSON payload goes to stdout under --json, else the human error
     // to stderr (matching anyhow's default), and the class picks the exit code.
     if let Err(err) = run(cli.command).await {
-        let (class, _fix) = agentos::exit::classify(&err);
+        let (class, _fix) = curie::exit::classify(&err);
         if ui::ui().json() {
-            ui::ui().emit_json(&agentos::exit::error_json(&err));
+            ui::ui().emit_json(&curie::exit::error_json(&err));
         } else {
             eprintln!("Error: {err:#}");
         }
@@ -1493,18 +1477,18 @@ async fn main() {
 /// (`Ui::emit`), mirroring the centralized error emit in `main`. The read verbs
 /// return a `CliOutput` instead of touching stdout themselves, so the
 /// json-vs-human decision is made in exactly one place (issue #456).
-fn emit<T: agentos::ui::CliOutput>(out: T) -> Result<()> {
+fn emit<T: curie::ui::CliOutput>(out: T) -> Result<()> {
     ui::ui().emit(&out);
     Ok(())
 }
 
 /// Dispatch one parsed command. No subcommand opens the interactive terminal,
-/// matching `agentos interactive` / `agentos ui`. Returns the command's
+/// matching `curie interactive` / `curie ui`. Returns the command's
 /// `Result`; `main`
-/// classifies any error into a semantic exit code (see `agentos::exit`).
+/// classifies any error into a semantic exit code (see `curie::exit`).
 async fn run(command: Option<Command>) -> Result<()> {
     match command {
-        None => agentos::interactive::run().await,
+        None => curie::interactive::run().await,
         Some(Command::Init {
             name,
             dir,
@@ -1514,7 +1498,7 @@ async fn run(command: Option<Command>) -> Result<()> {
         Some(Command::Build { tag }) => commands::build(&tag).await,
         Some(Command::Install { update }) => commands::install(update).await,
         Some(Command::Update { image }) => commands::update(image).await,
-        Some(Command::Interactive) => agentos::interactive::run().await,
+        Some(Command::Interactive) => curie::interactive::run().await,
         Some(Command::Secrets { action }) => match action {
             SecretsAction::Set { name, from_env } => {
                 secrets::set(secrets::SetSecretOpts { name, from_env })
@@ -1525,7 +1509,7 @@ async fn run(command: Option<Command>) -> Result<()> {
         Some(Command::Dev { action }) => match action {
             DevAction::Contracts => commands::dev_script("scripts/check-contracts.sh").await,
             DevAction::ChartCheck => {
-                commands::dev_script("charts/agentos/ci/render-assertions.sh").await
+                commands::dev_script("charts/curie/ci/render-assertions.sh").await
             }
             DevAction::E2e => commands::dev_script("cli/scripts/e2e.sh").await,
             DevAction::E2eLadder => commands::dev_script("cli/scripts/e2e-ladder.sh").await,
@@ -1646,7 +1630,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 commands::eval(cases, url, model, secret, image).await
             }
             SkillAction::EvalInit { out, force } => {
-                agentos::eval_init::run(agentos::eval_init::EvalInitOpts { out, force })
+                curie::eval_init::run(curie::eval_init::EvalInitOpts { out, force })
             }
         },
         Some(Command::Local { action }) => match action {
@@ -1748,7 +1732,7 @@ async fn run(command: Option<Command>) -> Result<()> {
             } => {
                 comms::require_provider(slack)?;
                 let resolved_file = resolve_compose_file(file, dry_run).await?;
-                // #749: fall back to Slack tokens persisted via `agentos secrets
+                // #749: fall back to Slack tokens persisted via `curie secrets
                 // set` when neither a flag nor an env var supplied one, so
                 // `--slack` needs no per-session re-export. Precedence: flag/env
                 // > saved vault.
@@ -1786,7 +1770,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     match load_turn(&std::env::current_dir()?)? {
                         Some(state) => Some(state),
                         None => anyhow::bail!(
-                            "no previous turn recorded in .agentos/last-turn.json; run a message without --continue first"
+                            "no previous turn recorded in .curie/last-turn.json; run a message without --continue first"
                         ),
                     }
                 } else {
@@ -1807,8 +1791,8 @@ async fn run(command: Option<Command>) -> Result<()> {
                     },
                     state,
                     // Empty is unset (#540), so the recorded-env bail below still
-                    // fires when $AGENTOS_API_KEY is exported blank.
-                    std::env::var("AGENTOS_API_KEY")
+                    // fires when $CURIE_API_KEY is exported blank.
+                    std::env::var("CURIE_API_KEY")
                         .ok()
                         .filter(|v| !v.is_empty()),
                 )?;
@@ -1816,9 +1800,9 @@ async fn run(command: Option<Command>) -> Result<()> {
                     text,
                     channel: resolved.channel,
                     thread: resolved.thread,
-                    namespace: "agentos".into(),
-                    release: "agentos".into(),
-                    chart: "charts/agentos".into(),
+                    namespace: "curie".into(),
+                    release: "curie".into(),
+                    chart: "charts/curie".into(),
                     listen_host: None,
                     listen_port: message::DEFAULT_LISTEN_PORT,
                     valkey_local_port: message::DEFAULT_VALKEY_LOCAL_PORT,
@@ -1850,8 +1834,8 @@ async fn run(command: Option<Command>) -> Result<()> {
                 message::eval(message::EvalOpts {
                     cases,
                     channel,
-                    namespace: "agentos".into(),
-                    release: "agentos".into(),
+                    namespace: "curie".into(),
+                    release: "curie".into(),
                     listen_host: None,
                     listen_port: message::DEFAULT_LISTEN_PORT,
                     valkey_local_port: message::DEFAULT_VALKEY_LOCAL_PORT,
@@ -1879,7 +1863,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 secret,
             } => {
                 let connect_hint = format!(
-                    "the platform API at {api_url} is unreachable. Start the local stack first with `agentos local up`, then re-run (or pass --api-url if your API is elsewhere)."
+                    "the platform API at {api_url} is unreachable. Start the local stack first with `curie local up`, then re-run (or pass --api-url if your API is elsewhere)."
                 );
                 emit(
                     commands::deploy(DeployOpts {
@@ -2017,7 +2001,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     artifacts::Channel::current(),
                     artifacts::version(),
                     artifacts::cache_root,
-                    std::path::Path::new("charts/agentos").is_dir(),
+                    std::path::Path::new("charts/curie").is_dir(),
                 )?;
                 let chart = materialize_artifact(resolved, dry_run, "chart").await?;
                 let credentials = if local_model.is_some() {
@@ -2045,11 +2029,9 @@ async fn run(command: Option<Command>) -> Result<()> {
                         credentials,
                         local_model,
                         // Default `agentSandbox.runner.model` from the shell
-                        // `AGENTOS_MODEL` (None when unset/empty) for cross-tier
+                        // `CURIE_MODEL` (None when unset/empty) for cross-tier
                         // parity with `local up` (#361).
-                        model: std::env::var("AGENTOS_MODEL")
-                            .ok()
-                            .filter(|s| !s.is_empty()),
+                        model: std::env::var("CURIE_MODEL").ok().filter(|s| !s.is_empty()),
                         // Populated by ops::up (generate on fresh install / reuse on
                         // upgrade); empty here so the pure builder starts clean.
                         secrets: vec![],
@@ -2118,7 +2100,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     artifacts::Channel::current(),
                     artifacts::version(),
                     artifacts::cache_root,
-                    std::path::Path::new("charts/agentos").is_dir(),
+                    std::path::Path::new("charts/curie").is_dir(),
                 )?;
                 let chart = materialize_artifact(resolved, dry_run, "chart").await?;
                 emit(
@@ -2159,7 +2141,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     match load_turn(&std::env::current_dir()?)? {
                         Some(state) => Some(state),
                         None => anyhow::bail!(
-                            "no previous turn recorded in .agentos/last-turn.json; run a message without --continue first"
+                            "no previous turn recorded in .curie/last-turn.json; run a message without --continue first"
                         ),
                     }
                 } else {
@@ -2186,8 +2168,8 @@ async fn run(command: Option<Command>) -> Result<()> {
                     },
                     state,
                     // Empty is unset (#540), so the recorded-env bail below still
-                    // fires when $AGENTOS_API_KEY is exported blank.
-                    std::env::var("AGENTOS_API_KEY")
+                    // fires when $CURIE_API_KEY is exported blank.
+                    std::env::var("CURIE_API_KEY")
                         .ok()
                         .filter(|v| !v.is_empty()),
                 )?;
@@ -2196,7 +2178,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                     artifacts::Channel::current(),
                     artifacts::version(),
                     artifacts::cache_root,
-                    std::path::Path::new("charts/agentos").is_dir(),
+                    std::path::Path::new("charts/curie").is_dir(),
                 )?;
                 let chart = materialize_artifact(resolved_chart, dry_run, "chart").await?;
                 // `cluster up` randomizes both credentials per release, so an
@@ -2319,7 +2301,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                         "`cluster deploy --secret` is not supported at the cluster tier yet: \
                          per-agent connector-secret delivery to worker-spawned sandboxes needs the \
                          K8s Secret + secretKeyRef path tracked in #440 (ADR-0009). Deploy without \
-                         --secret, or use `agentos local deploy --secret` for a local end-to-end run."
+                         --secret, or use `curie local deploy --secret` for a local end-to-end run."
                     );
                 }
                 let api_key = commands::normalize_deploy_api_key(api_key);
@@ -2332,7 +2314,7 @@ async fn run(command: Option<Command>) -> Result<()> {
                 } else {
                     api_key.expect("explicit key present when discovery not needed")
                 };
-                // An explicit --api-url / AGENTOS_API_URL direct-dials the given
+                // An explicit --api-url / CURIE_API_URL direct-dials the given
                 // URL. Otherwise self-plumb a kubectl port-forward to the
                 // release's api service so the discovered strong key travels only
                 // over the loopback tunnel, never over the cleartext UI /api
@@ -2383,11 +2365,11 @@ async fn run(command: Option<Command>) -> Result<()> {
                 };
                 let connect_hint = if self_plumbed {
                     format!(
-                        "the platform API at {api_url} is unreachable. `cluster deploy` self-plumbs a kubectl port-forward to svc/{release}-api; confirm the release is healthy with `agentos cluster status`, or pass --api-url to dial the API directly."
+                        "the platform API at {api_url} is unreachable. `cluster deploy` self-plumbs a kubectl port-forward to svc/{release}-api; confirm the release is healthy with `curie cluster status`, or pass --api-url to dial the API directly."
                     )
                 } else {
                     format!(
-                        "the platform API at {api_url} (from --api-url/AGENTOS_API_URL) is unreachable. `cluster deploy` dialed it directly with no port-forward; confirm that URL is reachable and the release is healthy with `agentos cluster status`, or omit --api-url to self-plumb a loopback port-forward to svc/{release}-api."
+                        "the platform API at {api_url} (from --api-url/CURIE_API_URL) is unreachable. `cluster deploy` dialed it directly with no port-forward; confirm that URL is reachable and the release is healthy with `curie cluster status`, or omit --api-url to self-plumb a loopback port-forward to svc/{release}-api."
                     )
                 };
                 emit(
@@ -2608,17 +2590,17 @@ async fn run(command: Option<Command>) -> Result<()> {
         ),
         Some(Command::Schema) => {
             use clap::CommandFactory;
-            print!("{}", agentos::schema::manifest_json(&Cli::command()));
+            print!("{}", curie::schema::manifest_json(&Cli::command()));
             Ok(())
         }
         Some(Command::SchemaIndex { name }) => {
             match name {
-                None => print!("{}", agentos::schemas::index()),
+                None => print!("{}", curie::schemas::index()),
                 Some(name) => {
-                    let body = agentos::schemas::schema(&name).ok_or_else(|| {
-                        agentos::exit::CliError::usage(format!(
-                            "no result schema named {name:?}; run `agentos schema-index` for the inventory of {} schemas",
-                            agentos::schemas::names().len()
+                    let body = curie::schemas::schema(&name).ok_or_else(|| {
+                        curie::exit::CliError::usage(format!(
+                            "no result schema named {name:?}; run `curie schema-index` for the inventory of {} schemas",
+                            curie::schemas::names().len()
                         ))
                     })?;
                     print!("{body}");
@@ -2626,7 +2608,7 @@ async fn run(command: Option<Command>) -> Result<()> {
             }
             Ok(())
         }
-        Some(Command::Guide) => agentos::guide::run(),
+        Some(Command::Guide) => curie::guide::run(),
     }
 }
 
@@ -2644,10 +2626,10 @@ mod tests {
     fn skill_approvals_accepts_list_and_resolve_to_decline_them() {
         // The flags exist so the skill tier DECLINES them with a reason
         // (ADR-0077), not clap-erroring like an unknown-flag typo.
-        Cli::try_parse_from(["agentos", "skill", "approvals", "--list"])
+        Cli::try_parse_from(["curie", "skill", "approvals", "--list"])
             .expect("skill approvals --list should parse");
         Cli::try_parse_from([
-            "agentos",
+            "curie",
             "skill",
             "approvals",
             "--resolve",
@@ -2660,12 +2642,12 @@ mod tests {
 
     #[test]
     fn build_defaults_tag_and_accepts_override() {
-        let cli = Cli::try_parse_from(["agentos", "build"]).expect("build should parse");
+        let cli = Cli::try_parse_from(["curie", "build"]).expect("build should parse");
         match cli.command {
-            Some(Command::Build { tag }) => assert_eq!(tag, "agentos-runner"),
+            Some(Command::Build { tag }) => assert_eq!(tag, "curie-runner"),
             _ => panic!("expected build command"),
         }
-        let cli = Cli::try_parse_from(["agentos", "build", "--tag", "my-runner:dev"])
+        let cli = Cli::try_parse_from(["curie", "build", "--tag", "my-runner:dev"])
             .expect("build --tag should parse");
         match cli.command {
             Some(Command::Build { tag }) => assert_eq!(tag, "my-runner:dev"),
@@ -2675,14 +2657,13 @@ mod tests {
 
     #[test]
     fn list_agents_parses() {
-        let cli =
-            Cli::try_parse_from(["agentos", "list-agents"]).expect("list-agents should parse");
+        let cli = Cli::try_parse_from(["curie", "list-agents"]).expect("list-agents should parse");
         assert!(matches!(cli.command, Some(Command::ListAgents)));
     }
 
     #[test]
     fn deploy_local_parses_the_folder_positional_and_defaults() {
-        let cli = Cli::try_parse_from(["agentos", "deploy-local", "revenue-leak"])
+        let cli = Cli::try_parse_from(["curie", "deploy-local", "revenue-leak"])
             .expect("deploy-local should parse");
         match cli.command {
             Some(Command::DeployLocal {
@@ -2701,13 +2682,13 @@ mod tests {
 
     #[test]
     fn no_subcommand_defaults_to_interactive() {
-        let cli = Cli::try_parse_from(["agentos"]).expect("bare agentos should parse");
+        let cli = Cli::try_parse_from(["curie"]).expect("bare curie should parse");
         assert!(cli.command.is_none());
     }
 
     #[test]
     fn install_parses() {
-        let cli = Cli::try_parse_from(["agentos", "install"]).expect("install should parse");
+        let cli = Cli::try_parse_from(["curie", "install"]).expect("install should parse");
         assert!(matches!(
             cli.command,
             Some(Command::Install { update: false })
@@ -2717,7 +2698,7 @@ mod tests {
     #[test]
     fn install_update_parses() {
         let cli =
-            Cli::try_parse_from(["agentos", "install", "--update"]).expect("install should parse");
+            Cli::try_parse_from(["curie", "install", "--update"]).expect("install should parse");
         assert!(matches!(
             cli.command,
             Some(Command::Install { update: true })
@@ -2727,7 +2708,7 @@ mod tests {
     #[test]
     fn skill_eval_model_is_repeatable_for_a_sweep() {
         // No --model -> drive the running runner (empty models vec).
-        match Cli::try_parse_from(["agentos", "skill", "eval"])
+        match Cli::try_parse_from(["curie", "skill", "eval"])
             .expect("skill eval should parse")
             .command
         {
@@ -2738,7 +2719,7 @@ mod tests {
         }
         // Repeated --model collects into the sweep list.
         match Cli::try_parse_from([
-            "agentos",
+            "curie",
             "skill",
             "eval",
             "--model",
@@ -2760,7 +2741,7 @@ mod tests {
     fn local_and_cluster_eval_model_are_repeatable_for_a_sweep() {
         // local eval --model repeats into the sweep list (#526).
         match Cli::try_parse_from([
-            "agentos", "local", "eval", "--model", "opus", "--model", "sonnet",
+            "curie", "local", "eval", "--model", "opus", "--model", "sonnet",
         ])
         .expect("local eval sweep should parse")
         .command
@@ -2771,7 +2752,7 @@ mod tests {
             _ => panic!("expected local eval sweep"),
         }
         // Bare local eval -> no models (the in-CLI parity gate).
-        match Cli::try_parse_from(["agentos", "local", "eval"])
+        match Cli::try_parse_from(["curie", "local", "eval"])
             .expect("local eval should parse")
             .command
         {
@@ -2781,7 +2762,7 @@ mod tests {
             _ => panic!("expected local eval"),
         }
         // cluster eval --model likewise.
-        match Cli::try_parse_from(["agentos", "cluster", "eval", "--model", "opus"])
+        match Cli::try_parse_from(["curie", "cluster", "eval", "--model", "opus"])
             .expect("cluster eval sweep should parse")
             .command
         {
@@ -2794,13 +2775,13 @@ mod tests {
 
     #[test]
     fn update_parses_with_and_without_image() {
-        let bare = Cli::try_parse_from(["agentos", "update"]).expect("update should parse");
+        let bare = Cli::try_parse_from(["curie", "update"]).expect("update should parse");
         assert!(matches!(
             bare.command,
             Some(Command::Update { image: false })
         ));
         let with_image =
-            Cli::try_parse_from(["agentos", "update", "--image"]).expect("update should parse");
+            Cli::try_parse_from(["curie", "update", "--image"]).expect("update should parse");
         assert!(matches!(
             with_image.command,
             Some(Command::Update { image: true })
@@ -2809,18 +2790,17 @@ mod tests {
 
     #[test]
     fn interactive_parses_with_aliases() {
-        let cli =
-            Cli::try_parse_from(["agentos", "interactive"]).expect("interactive should parse");
+        let cli = Cli::try_parse_from(["curie", "interactive"]).expect("interactive should parse");
         assert!(matches!(cli.command, Some(Command::Interactive)));
-        let cli = Cli::try_parse_from(["agentos", "ui"]).expect("ui alias should parse");
+        let cli = Cli::try_parse_from(["curie", "ui"]).expect("ui alias should parse");
         assert!(matches!(cli.command, Some(Command::Interactive)));
-        let cli = Cli::try_parse_from(["agentos", "tui"]).expect("tui alias should parse");
+        let cli = Cli::try_parse_from(["curie", "tui"]).expect("tui alias should parse");
         assert!(matches!(cli.command, Some(Command::Interactive)));
     }
 
     #[test]
     fn secrets_subcommands_parse() {
-        let cli = Cli::try_parse_from(["agentos", "secrets", "set", "GITHUB_TOKEN"])
+        let cli = Cli::try_parse_from(["curie", "secrets", "set", "GITHUB_TOKEN"])
             .expect("secrets set should parse");
         assert!(matches!(
             cli.command,
@@ -2829,7 +2809,7 @@ mod tests {
             })
         ));
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "secrets",
             "set",
             "GITHUB_TOKEN",
@@ -2847,14 +2827,14 @@ mod tests {
             })
         ));
         let cli =
-            Cli::try_parse_from(["agentos", "secrets", "list"]).expect("secrets list should parse");
+            Cli::try_parse_from(["curie", "secrets", "list"]).expect("secrets list should parse");
         assert!(matches!(
             cli.command,
             Some(Command::Secrets {
                 action: SecretsAction::List
             })
         ));
-        let cli = Cli::try_parse_from(["agentos", "secrets", "unset", "GITHUB_TOKEN"])
+        let cli = Cli::try_parse_from(["curie", "secrets", "unset", "GITHUB_TOKEN"])
             .expect("secrets unset should parse");
         assert!(matches!(
             cli.command,
@@ -2866,15 +2846,15 @@ mod tests {
 
     #[test]
     fn dev_subcommands_parse() {
-        let cli = Cli::try_parse_from(["agentos", "dev", "contracts"])
-            .expect("dev contracts should parse");
+        let cli =
+            Cli::try_parse_from(["curie", "dev", "contracts"]).expect("dev contracts should parse");
         assert!(matches!(
             cli.command,
             Some(Command::Dev {
                 action: DevAction::Contracts
             })
         ));
-        let cli = Cli::try_parse_from(["agentos", "dev", "chart-check"])
+        let cli = Cli::try_parse_from(["curie", "dev", "chart-check"])
             .expect("dev chart-check should parse");
         assert!(matches!(
             cli.command,
@@ -2882,22 +2862,22 @@ mod tests {
                 action: DevAction::ChartCheck
             })
         ));
-        let cli = Cli::try_parse_from(["agentos", "dev", "e2e"]).expect("dev e2e should parse");
+        let cli = Cli::try_parse_from(["curie", "dev", "e2e"]).expect("dev e2e should parse");
         assert!(matches!(
             cli.command,
             Some(Command::Dev {
                 action: DevAction::E2e
             })
         ));
-        let cli = Cli::try_parse_from(["agentos", "dev", "docs-lint"])
-            .expect("dev docs-lint should parse");
+        let cli =
+            Cli::try_parse_from(["curie", "dev", "docs-lint"]).expect("dev docs-lint should parse");
         assert!(matches!(
             cli.command,
             Some(Command::Dev {
                 action: DevAction::DocsLint
             })
         ));
-        let cli = Cli::try_parse_from(["agentos", "dev", "eval-falsifiability"])
+        let cli = Cli::try_parse_from(["curie", "dev", "eval-falsifiability"])
             .expect("dev eval-falsifiability should parse");
         assert!(matches!(
             cli.command,
@@ -2905,7 +2885,7 @@ mod tests {
                 action: DevAction::EvalFalsifiability
             })
         ));
-        let cli = Cli::try_parse_from(["agentos", "dev", "e2e-ladder"])
+        let cli = Cli::try_parse_from(["curie", "dev", "e2e-ladder"])
             .expect("dev e2e-ladder should parse");
         assert!(matches!(
             cli.command,
@@ -2913,7 +2893,7 @@ mod tests {
                 action: DevAction::E2eLadder
             })
         ));
-        let cli = Cli::try_parse_from(["agentos", "dev", "chart-runtime-e2e"])
+        let cli = Cli::try_parse_from(["curie", "dev", "chart-runtime-e2e"])
             .expect("dev chart-runtime-e2e should parse");
         assert!(matches!(
             cli.command,
@@ -2929,13 +2909,13 @@ mod tests {
     // ship without ever being caught by the positive-path tests above.
     #[test]
     fn dev_unknown_subcommand_rejected() {
-        let result = Cli::try_parse_from(["agentos", "dev", "e2e-ladder-typo"]);
+        let result = Cli::try_parse_from(["curie", "dev", "e2e-ladder-typo"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn local_message_accepts_api_key() {
-        let cli = Cli::try_parse_from(["agentos", "local", "message", "--api-key", "K", "hi"])
+        let cli = Cli::try_parse_from(["curie", "local", "message", "--api-key", "K", "hi"])
             .expect("local message --api-key should parse");
         match cli.command {
             Some(Command::Local {
@@ -2950,7 +2930,7 @@ mod tests {
     /// handler discovers the release's own Secret instead.
     #[test]
     fn cluster_message_credentials_default_to_discovery() {
-        let cli = Cli::try_parse_from(["agentos", "cluster", "message", "hi"])
+        let cli = Cli::try_parse_from(["curie", "cluster", "message", "hi"])
             .expect("cluster message should parse");
         match cli.command {
             Some(Command::Cluster {
@@ -2974,7 +2954,7 @@ mod tests {
     #[test]
     fn cluster_message_accepts_explicit_credentials() {
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "cluster",
             "message",
             "--api-key",
@@ -3006,7 +2986,7 @@ mod tests {
     #[test]
     fn cluster_eval_credentials_default_to_discovery() {
         let cli =
-            Cli::try_parse_from(["agentos", "cluster", "eval"]).expect("cluster eval should parse");
+            Cli::try_parse_from(["curie", "cluster", "eval"]).expect("cluster eval should parse");
         match cli.command {
             Some(Command::Cluster {
                 action:
@@ -3029,7 +3009,7 @@ mod tests {
     #[test]
     fn cluster_eval_accepts_explicit_credentials() {
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "cluster",
             "eval",
             "--api-key",
@@ -3056,7 +3036,7 @@ mod tests {
 
     #[test]
     fn cluster_deploy_defaults_to_proxy_discovery() {
-        let cli = Cli::try_parse_from(["agentos", "cluster", "deploy"])
+        let cli = Cli::try_parse_from(["curie", "cluster", "deploy"])
             .expect("cluster deploy should parse");
         match cli.command {
             Some(Command::Cluster {
@@ -3069,8 +3049,8 @@ mod tests {
                     },
             }) => {
                 assert_eq!(api_url, None);
-                assert_eq!(namespace, "agentos");
-                assert_eq!(release, "agentos");
+                assert_eq!(namespace, "curie");
+                assert_eq!(release, "curie");
             }
             _ => panic!("expected cluster deploy command"),
         }
@@ -3079,7 +3059,7 @@ mod tests {
     #[test]
     fn cluster_deploy_accepts_explicit_api_url() {
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "cluster",
             "deploy",
             "--api-url",
@@ -3097,7 +3077,7 @@ mod tests {
     #[test]
     fn cluster_deploy_captures_namespace_and_release() {
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "cluster",
             "deploy",
             "--namespace",
@@ -3123,12 +3103,9 @@ mod tests {
     #[test]
     fn local_short_file_flag_parses_for_all_verbs() {
         let cases = [
-            (["agentos", "local", "up", "-f", "custom.yaml"], "up"),
-            (["agentos", "local", "down", "-f", "custom.yaml"], "down"),
-            (
-                ["agentos", "local", "status", "-f", "custom.yaml"],
-                "status",
-            ),
+            (["curie", "local", "up", "-f", "custom.yaml"], "up"),
+            (["curie", "local", "down", "-f", "custom.yaml"], "down"),
+            (["curie", "local", "status", "-f", "custom.yaml"], "status"),
         ];
 
         for (argv, verb) in cases {
@@ -3159,7 +3136,7 @@ mod tests {
 
     #[test]
     fn local_up_parses_minimal_flag() {
-        let cli = Cli::try_parse_from(["agentos", "local", "up", "--minimal"])
+        let cli = Cli::try_parse_from(["curie", "local", "up", "--minimal"])
             .expect("local up --minimal should parse");
         match cli.command {
             Some(Command::Local {
@@ -3171,7 +3148,7 @@ mod tests {
 
     #[test]
     fn local_up_parses_slack_flag() {
-        let cli = Cli::try_parse_from(["agentos", "local", "up", "--slack"])
+        let cli = Cli::try_parse_from(["curie", "local", "up", "--slack"])
             .expect("local up --slack should parse");
         match cli.command {
             Some(Command::Local {
@@ -3184,7 +3161,7 @@ mod tests {
     #[test]
     fn local_comms_parses_slack_disconnect_and_app_token() {
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "local",
             "comms",
             "--slack",
@@ -3220,8 +3197,8 @@ mod tests {
         let conn = ClusterConn {
             api_url: Some("https://api.example.test".into()),
             api_key: Some("real-release-key".into()),
-            namespace: "agentos".into(),
-            release: "agentos".into(),
+            namespace: "curie".into(),
+            release: "curie".into(),
         };
         let (url, key) = resolve_cluster_conn(conn)
             .await
@@ -3235,7 +3212,7 @@ mod tests {
         // The discovery flags exist on a cluster governance verb so an omitted
         // --api-url/--api-key can be resolved from the named release (#524).
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "cluster",
             "versions",
             "demo",
@@ -3263,7 +3240,7 @@ mod tests {
 
     #[test]
     fn cluster_kill_parses_agent_and_yes() {
-        let cli = Cli::try_parse_from(["agentos", "cluster", "kill", "deal-desk", "--yes"])
+        let cli = Cli::try_parse_from(["curie", "cluster", "kill", "deal-desk", "--yes"])
             .expect("cluster kill should parse");
         match cli.command {
             Some(Command::Cluster {
@@ -3278,7 +3255,7 @@ mod tests {
 
     #[test]
     fn cluster_kill_defaults_yes_and_dry_run_off() {
-        let cli = Cli::try_parse_from(["agentos", "cluster", "kill", "a"])
+        let cli = Cli::try_parse_from(["curie", "cluster", "kill", "a"])
             .expect("cluster kill without flags should parse");
         match cli.command {
             Some(Command::Cluster {
@@ -3300,7 +3277,7 @@ mod tests {
 
     #[test]
     fn cluster_resume_parses_agent_and_dry_run() {
-        let cli = Cli::try_parse_from(["agentos", "cluster", "resume", "a", "--dry-run"])
+        let cli = Cli::try_parse_from(["curie", "cluster", "resume", "a", "--dry-run"])
             .expect("cluster resume should parse");
         match cli.command {
             Some(Command::Cluster {
@@ -3315,7 +3292,7 @@ mod tests {
 
     #[test]
     fn cluster_budget_parses_agent_and_limit() {
-        let cli = Cli::try_parse_from(["agentos", "cluster", "budget", "a", "--limit", "12.5"])
+        let cli = Cli::try_parse_from(["curie", "cluster", "budget", "a", "--limit", "12.5"])
             .expect("cluster budget should parse");
         match cli.command {
             Some(Command::Cluster {
@@ -3331,7 +3308,7 @@ mod tests {
     #[test]
     fn cluster_reset_thread_parses_agent_thread_key_and_yes() {
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "cluster",
             "reset-thread",
             "deal-desk",
@@ -3361,7 +3338,7 @@ mod tests {
     #[test]
     fn cluster_reset_thread_defaults_yes_and_dry_run_off() {
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "cluster",
             "reset-thread",
             "a",
@@ -3392,14 +3369,14 @@ mod tests {
     #[test]
     fn cluster_reset_thread_requires_thread_key() {
         // --thread-key has no default; omitting it must be a parse error.
-        assert!(Cli::try_parse_from(["agentos", "cluster", "reset-thread", "a", "--yes"]).is_err());
+        assert!(Cli::try_parse_from(["curie", "cluster", "reset-thread", "a", "--yes"]).is_err());
     }
 
     #[test]
     fn local_platform_verbs_parse() {
         // The inspection/governance verbs mirrored onto the local tier.
         assert!(matches!(
-            Cli::try_parse_from(["agentos", "local", "versions", "gh"])
+            Cli::try_parse_from(["curie", "local", "versions", "gh"])
                 .expect("local versions")
                 .command,
             Some(Command::Local {
@@ -3407,7 +3384,7 @@ mod tests {
             })
         ));
         assert!(matches!(
-            Cli::try_parse_from(["agentos", "local", "memory", "gh"])
+            Cli::try_parse_from(["curie", "local", "memory", "gh"])
                 .expect("local memory")
                 .command,
             Some(Command::Local {
@@ -3415,7 +3392,7 @@ mod tests {
             })
         ));
         assert!(matches!(
-            Cli::try_parse_from(["agentos", "local", "observability"])
+            Cli::try_parse_from(["curie", "local", "observability"])
                 .expect("local observability")
                 .command,
             Some(Command::Local {
@@ -3423,14 +3400,14 @@ mod tests {
             })
         ));
         // local budget/kill/resume are the mirrored lifecycle verbs.
-        assert!(Cli::try_parse_from(["agentos", "local", "budget", "gh", "--limit", "1"]).is_ok());
-        assert!(Cli::try_parse_from(["agentos", "local", "kill", "gh", "--yes"]).is_ok());
+        assert!(Cli::try_parse_from(["curie", "local", "budget", "gh", "--limit", "1"]).is_ok());
+        assert!(Cli::try_parse_from(["curie", "local", "kill", "gh", "--yes"]).is_ok());
     }
 
     #[test]
     fn local_reset_thread_parses_agent_thread_key_and_yes() {
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "local",
             "reset-thread",
             "gh",
@@ -3464,7 +3441,7 @@ mod tests {
         // --dry-run parses fine without --yes; the refusal-without-yes check
         // happens in commands::reset_thread, not at the clap layer.
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "local",
             "reset-thread",
             "gh",
@@ -3492,7 +3469,7 @@ mod tests {
     #[test]
     fn local_observability_open_flag_defaults_off_and_parses() {
         // Bare `local observability` must NOT open a browser (agent-first default).
-        match Cli::try_parse_from(["agentos", "local", "observability"])
+        match Cli::try_parse_from(["curie", "local", "observability"])
             .expect("local observability")
             .command
         {
@@ -3502,7 +3479,7 @@ mod tests {
             _ => panic!("expected local observability command"),
         }
         // `--open` is the explicit human opt-in.
-        match Cli::try_parse_from(["agentos", "local", "observability", "--open"])
+        match Cli::try_parse_from(["curie", "local", "observability", "--open"])
             .expect("local observability --open")
             .command
         {
@@ -3515,7 +3492,7 @@ mod tests {
 
     #[test]
     fn cluster_observability_parses_with_namespace_release_defaults() {
-        match Cli::try_parse_from(["agentos", "cluster", "observability"])
+        match Cli::try_parse_from(["curie", "cluster", "observability"])
             .expect("cluster observability")
             .command
         {
@@ -3528,8 +3505,8 @@ mod tests {
                         open,
                     },
             }) => {
-                assert_eq!(namespace, "agentos");
-                assert_eq!(release, "agentos");
+                assert_eq!(namespace, "curie");
+                assert_eq!(release, "curie");
                 assert!(!dry_run);
                 assert!(!open, "--open must default to false");
             }
@@ -3541,7 +3518,7 @@ mod tests {
     fn cluster_observability_accepts_the_global_json_flag() {
         // `--json` is a GLOBAL flag on `Cli` (issue #456), not a subcommand flag,
         // so it parses onto the top-level struct while the subcommand still binds.
-        let cli = Cli::try_parse_from(["agentos", "cluster", "observability", "--json"])
+        let cli = Cli::try_parse_from(["curie", "cluster", "observability", "--json"])
             .expect("cluster observability --json");
         assert!(cli.json, "--json must set the global json flag");
         assert!(matches!(
@@ -3554,7 +3531,7 @@ mod tests {
 
     #[test]
     fn cluster_observability_parses_open_and_dry_run_together() {
-        match Cli::try_parse_from(["agentos", "cluster", "observability", "--open", "--dry-run"])
+        match Cli::try_parse_from(["curie", "cluster", "observability", "--open", "--dry-run"])
             .expect("cluster observability --open --dry-run")
             .command
         {
@@ -3571,7 +3548,7 @@ mod tests {
     #[test]
     fn approvals_parses_repeatable_gate_and_clear() {
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "local",
             "approvals",
             "gh",
@@ -3598,19 +3575,19 @@ mod tests {
             _ => panic!("expected local approvals command"),
         }
         // --clear parses on both tiers.
-        assert!(Cli::try_parse_from(["agentos", "cluster", "approvals", "gh", "--clear"]).is_ok());
+        assert!(Cli::try_parse_from(["curie", "cluster", "approvals", "gh", "--clear"]).is_ok());
     }
 
     #[test]
     fn cluster_budget_requires_limit() {
         // `--limit` has no default, so omitting it is a parse error (not a silent
         // zero-budget request).
-        assert!(Cli::try_parse_from(["agentos", "cluster", "budget", "a"]).is_err());
+        assert!(Cli::try_parse_from(["curie", "cluster", "budget", "a"]).is_err());
     }
 
     #[test]
     fn cluster_delete_parses_agent_and_yes() {
-        let cli = Cli::try_parse_from(["agentos", "cluster", "delete", "a", "--yes"])
+        let cli = Cli::try_parse_from(["curie", "cluster", "delete", "a", "--yes"])
             .expect("cluster delete should parse");
         match cli.command {
             Some(Command::Cluster {
@@ -3626,7 +3603,7 @@ mod tests {
     #[test]
     fn skill_approvals_parses_plugin_dir_and_repeatable_gate() {
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "skill",
             "approvals",
             "--plugin-dir",
@@ -3657,7 +3634,7 @@ mod tests {
 
     #[test]
     fn skill_approvals_parses_clear() {
-        let cli = Cli::try_parse_from(["agentos", "skill", "approvals", "--clear"])
+        let cli = Cli::try_parse_from(["curie", "skill", "approvals", "--clear"])
             .expect("skill approvals --clear should parse");
         match cli.command {
             Some(Command::Skill {
@@ -3675,8 +3652,7 @@ mod tests {
         // The --clear + --gate conflict is a RUNTIME usage error (asserted in the
         // commands.rs handler tests), not a clap parse error.
         assert!(
-            Cli::try_parse_from(["agentos", "skill", "approvals", "--clear", "--gate", "X"])
-                .is_ok()
+            Cli::try_parse_from(["curie", "skill", "approvals", "--clear", "--gate", "X"]).is_ok()
         );
     }
 
@@ -3685,7 +3661,7 @@ mod tests {
         // The verb EXISTS at the skill tier (answered, not a clap unknown
         // subcommand): parsing succeeds and the runtime reports unavailability.
         assert!(matches!(
-            Cli::try_parse_from(["agentos", "skill", "versions"])
+            Cli::try_parse_from(["curie", "skill", "versions"])
                 .expect("skill versions should parse")
                 .command,
             Some(Command::Skill {
@@ -3700,7 +3676,7 @@ mod tests {
         // it with an explicit #440 message (#551). The decline itself is a runtime
         // bail; here we lock that the surface accepts the flag.
         match Cli::try_parse_from([
-            "agentos",
+            "curie",
             "cluster",
             "deploy",
             "--secret",
@@ -3715,7 +3691,7 @@ mod tests {
             _ => panic!("expected cluster deploy"),
         }
         // Bare cluster deploy still parses with no secrets.
-        match Cli::try_parse_from(["agentos", "cluster", "deploy"])
+        match Cli::try_parse_from(["curie", "cluster", "deploy"])
             .expect("bare cluster deploy should parse")
             .command
         {
@@ -3729,7 +3705,7 @@ mod tests {
     #[test]
     fn skill_memory_parses_as_a_known_verb() {
         assert!(matches!(
-            Cli::try_parse_from(["agentos", "skill", "memory"])
+            Cli::try_parse_from(["curie", "skill", "memory"])
                 .expect("skill memory should parse")
                 .command,
             Some(Command::Skill {
@@ -3741,7 +3717,7 @@ mod tests {
     #[test]
     fn cluster_comms_parses_slack_disconnect_and_app_token() {
         let cli = Cli::try_parse_from([
-            "agentos",
+            "curie",
             "cluster",
             "comms",
             "--slack",

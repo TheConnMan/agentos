@@ -9,16 +9,16 @@ oauth.env
 # material (its dev-default values live in the committed values.yaml). Without
 # this the chart is silently uninstallable (backing stores reference a Secret
 # that never gets committed).
-!charts/agentos/templates/secrets.yaml
-# Exception: the committed JSON Schema for `agentos secrets list --json` output
+!charts/curie/templates/secrets.yaml
+# Exception: the committed JSON Schema for `curie secrets list --json` output
 # (#634). It describes the SHAPE of that result (a list of secret NAMES), never
 # any secret material, and the schema contract test requires it committed.
 # Without this the `*secret*` rule above silently drops it and CI goes red.
 !cli/schema/secrets.schema.json
 # Same exception for the per-agent connector-secret template + its render-
 # assertion script (ADR-0009, #429): Helm syntax / a test, not secret material.
-!charts/agentos/templates/agent-connector-secrets.yaml
-!charts/agentos/ci/connector-secrets-assertions.sh
+!charts/curie/templates/agent-connector-secrets.yaml
+!charts/curie/ci/connector-secrets-assertions.sh
 
 # Python
 __pycache__/
@@ -45,8 +45,8 @@ build/
 # Local working files (plans, scratch, analysis) — never committed
 .projects/
 
-# Local AgentOS runner and turn state
-.agentos/
+# Local Curie runner and turn state
+.curie/
 
 # Personal, in-progress agent bundles (sibling of examples/) -- `list-agents`
 # and `deploy-local <folder>` read from here; never part of the repo proper.

@@ -1,4 +1,4 @@
-"""Export the committed AgentOS channel message JSON Schema."""
+"""Export the committed Curie channel message JSON Schema."""
 
 import json
 from pathlib import Path
@@ -16,7 +16,7 @@ from .models import (
     OutboundMessage,
 )
 
-SCHEMA_ID = "https://curie.tech/agentos/channel-protocol.schema.json"
+SCHEMA_ID = "https://curietech.ai/schemas/channel-protocol.schema.json"
 _MODELS = (
     ChannelCapabilities,
     OutboundMessage,
@@ -40,7 +40,7 @@ def build_schema() -> dict[str, Any]:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": SCHEMA_ID,
-        "title": "AgentOS Channel Protocol v1.0",
+        "title": "Curie Channel Protocol v1.0",
         "messageVersion": "1.0",
         **top,
     }

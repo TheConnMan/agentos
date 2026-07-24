@@ -1,8 +1,8 @@
 """Alembic environment (async engine, URL and metadata from the app).
 
-The version table lives in the app's own ``agentos`` schema, not ``public``.
+The version table lives in the app's own ``curie`` schema, not ``public``.
 Alembic defaults ``alembic_version`` to ``public``, which leaves the public
-schema non-empty; when AgentOS shares a Postgres with Langfuse that trips
+schema non-empty; when Curie shares a Postgres with Langfuse that trips
 Langfuse's first-boot Prisma migration (P3005: "the database schema is not
 empty"). Pinning ``version_table_schema`` keeps ``public`` untouched so a
 co-tenant's migrations still see an empty public schema.
@@ -10,10 +10,10 @@ co-tenant's migrations still see an empty public schema.
 
 import asyncio
 
-from agentos_api import models  # noqa: F401  (register tables on the metadata)
-from agentos_api.config import get_settings
-from agentos_api.db import SCHEMA, Base
 from alembic import context
+from curie_api import models  # noqa: F401  (register tables on the metadata)
+from curie_api.config import get_settings
+from curie_api.db import SCHEMA, Base
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -80,7 +80,7 @@ def run_migrations_offline() -> None:
     )
     with context.begin_transaction():
         # Emit the schema creation before anything else so the generated SQL
-        # creates agentos.alembic_version into an existing schema (Alembic writes
+        # creates curie.alembic_version into an existing schema (Alembic writes
         # the version table before migration 0001's CREATE SCHEMA would run).
         context.execute(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"')
         context.run_migrations()

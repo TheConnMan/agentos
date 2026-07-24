@@ -11,9 +11,9 @@ order: 10
 
 # INTERFACE: Relational DB (Postgres)
 
-> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
+> Part of the Curie swappable-seam catalog — see the [seam index](../../interfaces.md).
 
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** SOFT &nbsp;·&nbsp; **Implementations today:** 1 &nbsp;·&nbsp; **Swap-readiness grade:** A-
 <!-- END GENERATED: header -->
 
@@ -24,7 +24,7 @@ order: 10
 App state (agents, versions, deployments) lives in a Postgres database, reached
 through SQLAlchemy 2.0 (async) with Alembic migrations. The swappable thing is the
 **Postgres instance behind the DSN** — compose Postgres, RDS, Cloud SQL, any managed
-Postgres — while the SQL/ORM layer and the `agentos` schema stay opinionated core.
+Postgres — while the SQL/ORM layer and the `curie` schema stay opinionated core.
 This is a deliberately un-abstracted seam: a managed-Postgres swap is a **DSN change**
 (`DATABASE_URL`), not a code change. There is no repository/DAL port; SQLAlchemy 2.0 +
 Alembic *is* the contract, extracted into something narrower only if a non-Postgres
@@ -35,29 +35,29 @@ store is ever demanded.
 A second implementation must be a Postgres speaking the async `asyncpg` dialect and
 honoring the models/migrations verbatim:
 
-- **DSN + schema** (`apps/api/src/agentos_api/db.py::SCHEMA`, `apps/api/src/agentos_api/db.py::create_engine`): `SCHEMA = get_settings().db_schema` (default `"agentos"`, `apps/api/src/agentos_api/config.py::Settings`); the engine is built from `database_url` (env `DATABASE_URL`) via `create_async_engine(..., pool_pre_ping=True)`.
-- **Schema-scoped metadata** (`apps/api/src/agentos_api/db.py::Base`): `Base.metadata = MetaData(schema=SCHEMA)` — every table is qualified into the `agentos` schema.
-- **Models** (`apps/api/src/agentos_api/models.py`): `apps/api/src/agentos_api/models.py::Agent` (table `agents`), `apps/api/src/agentos_api/models.py::AgentVersion` (table `agent_versions`), `apps/api/src/agentos_api/models.py::Deployment` (table `deployments`), `apps/api/src/agentos_api/models.py::Approval` (table `approvals`), `apps/api/src/agentos_api/models.py::ApprovalAuditEntry` (table `approval_audit_entries`), and `apps/api/src/agentos_api/models.py::WorkflowStateEntry` (table `workflow_state_entries`), plus the `apps/api/src/agentos_api/models.py::Environment` and `apps/api/src/agentos_api/models.py::ApprovalStatus` StrEnums. The authoritative list is the set of `Base` subclasses in that module; read it there rather than trusting a count here.
+- **DSN + schema** (`apps/api/src/curie_api/db.py::SCHEMA`, `apps/api/src/curie_api/db.py::create_engine`): `SCHEMA = get_settings().db_schema` (default `"curie"`, `apps/api/src/curie_api/config.py::Settings`); the engine is built from `database_url` (env `DATABASE_URL`) via `create_async_engine(..., pool_pre_ping=True)`.
+- **Schema-scoped metadata** (`apps/api/src/curie_api/db.py::Base`): `Base.metadata = MetaData(schema=SCHEMA)` — every table is qualified into the `curie` schema.
+- **Models** (`apps/api/src/curie_api/models.py`): `apps/api/src/curie_api/models.py::Agent` (table `agents`), `apps/api/src/curie_api/models.py::AgentVersion` (table `agent_versions`), `apps/api/src/curie_api/models.py::Deployment` (table `deployments`), `apps/api/src/curie_api/models.py::Approval` (table `approvals`), `apps/api/src/curie_api/models.py::ApprovalAuditEntry` (table `approval_audit_entries`), and `apps/api/src/curie_api/models.py::WorkflowStateEntry` (table `workflow_state_entries`), plus the `apps/api/src/curie_api/models.py::Environment` and `apps/api/src/curie_api/models.py::ApprovalStatus` StrEnums. The authoritative list is the set of `Base` subclasses in that module; read it there rather than trusting a count here.
 - **Migrations**: the target DB must apply the **whole Alembic chain in `apps/api/alembic/versions/`**, in revision order, ending at `alembic heads`. The chain grows with the product, so it is deliberately not enumerated here: `ls apps/api/alembic/versions/` is the list, and `alembic heads` is the tip a conforming DB must reach. A single head is the invariant — a fork means two branches each added a migration (rebase and merge the heads before swapping anything).
 
 ## Implementations today
 
 One: the compose/dev Postgres, reached through the single SQLAlchemy async engine in
-`apps/api/src/agentos_api/db.py::create_engine`. Tests point the same engine at the compose
+`apps/api/src/curie_api/db.py::create_engine`. Tests point the same engine at the compose
 Postgres by overriding `database_url` (per the module docstring).
 
 ## Known leakage
 
 Two Postgres-isms make the "just change the DSN" story leak for a non-Postgres store:
 
-1. **`postgresql.UUID` column type** — `apps/api/src/agentos_api/models.py::UUID` is imported
+1. **`postgresql.UUID` column type** — `apps/api/src/curie_api/models.py::UUID` is imported
    from `sqlalchemy.dialects.postgresql` and used as `UUID(as_uuid=True)` on every primary
-   and foreign key (e.g. `apps/api/src/agentos_api/models.py::Agent`). This is a dialect-specific type.
+   and foreign key (e.g. `apps/api/src/curie_api/models.py::Agent`). This is a dialect-specific type.
 2. **Schema-qualified tables + a schema-scoped native enum** — foreign keys are
-   written as `f"{SCHEMA}.agents.id"` (`apps/api/src/agentos_api/models.py::AgentVersion`,
-   `apps/api/src/agentos_api/models.py::Deployment`) and the `environment`
+   written as `f"{SCHEMA}.agents.id"` (`apps/api/src/curie_api/models.py::AgentVersion`,
+   `apps/api/src/curie_api/models.py::Deployment`) and the `environment`
    column is a native Postgres `Enum(Environment, name="environment", schema=SCHEMA)`
-   (`apps/api/src/agentos_api/models.py::Deployment`), which materializes as a `CREATE TYPE` in the `agentos` schema.
+   (`apps/api/src/curie_api/models.py::Deployment`), which materializes as a `CREATE TYPE` in the `curie` schema.
 
 Both are cheap within the Postgres family (the A- grade) but would need rework for a
 different RDBMS — the marker that a real port should be extracted first.

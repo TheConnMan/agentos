@@ -4,9 +4,9 @@ Date: 2026-07-13
 
 Status: Accepted
 
-Implements the memory seam for epic [#28](https://github.com/curie-eng/agentos/issues/28),
-issue [#264](https://github.com/curie-eng/agentos/issues/264). This is the first
-loader for `AGENTOS_MEMORY_REF`, which until now was a `SessionConfig` field
+Implements the memory seam for epic [#28](https://github.com/curie-eng/curie/issues/28),
+issue [#264](https://github.com/curie-eng/curie/issues/264). This is the first
+loader for `CURIE_MEMORY_REF`, which until now was a `SessionConfig` field
 carried end-to-end but never dereferenced
 ([`docs/interfaces/memory/INTERFACE.md`](../interfaces/memory/INTERFACE.md)).
 
@@ -37,7 +37,7 @@ Two constraints shape the design:
 **Memory is a scoped namespace (`memory`) over the existing durable state
 store, behind a small `MemoryStore` port.**
 
-- **The port** (`runner/src/agentos_runner/memory.py`) is a `Protocol` with two
+- **The port** (`runner/src/curie_runner/memory.py`) is a `Protocol` with two
   methods: `load() -> list[MemoryRecord]` and `append(record)`. No query
   language and no `consolidate` — consolidation is later work (#265/#266/#267).
   A `MemoryRecord` is `content` plus a `Provenance` (`learned_from_session_id`,
@@ -48,12 +48,12 @@ store, behind a small `MemoryStore` port.**
   `/append` endpoint (#248). Durability, size caps, and survive-suspend/resume
   come from the state store for free. `NullMemoryStore` is used when no ref is
   configured, so the boot path is uniform.
-- **`AGENTOS_MEMORY_REF` resolution:** the ref is the URL of the agent's memory
+- **`CURIE_MEMORY_REF` resolution:** the ref is the URL of the agent's memory
   namespace on the state API (`http(s)://api/agents/<id>/state/memory`). An
   `s3://` or other scheme is reserved for a future loader and rejected loudly at
   boot. The frozen ACI `SessionConfig.memory_ref` field is unchanged — no
   frozen-contract change. The state-API bearer is a **runner-local** knob
-  (`AGENTOS_MEMORY_TOKEN`), like `AGENTOS_RUNNER_TOKEN`/`AGENTOS_MODEL`, not part
+  (`CURIE_MEMORY_TOKEN`), like `CURIE_RUNNER_TOKEN`/`CURIE_MODEL`, not part
   of the frozen env.
 - **Delivery into the sandbox:** at runner boot the store is resolved, prior
   memory is loaded, and it is composed into the effective system prompt as a
@@ -62,8 +62,8 @@ store, behind a small `MemoryStore` port.**
 - **Boot resilience:** an unsupported ref scheme fails the process loudly; a
   *transient* load failure degrades to "no memory" rather than blocking boot, so
   an agent still runs when its memory store is briefly unavailable.
-- **The worker delivers the ref:** `binding.boot_env` sets `AGENTOS_MEMORY_REF`
-  to the agent's namespace URL and forwards the API key as `AGENTOS_MEMORY_TOKEN`.
+- **The worker delivers the ref:** `binding.boot_env` sets `CURIE_MEMORY_REF`
+  to the agent's namespace URL and forwards the API key as `CURIE_MEMORY_TOKEN`.
 
 ## Alternatives considered
 

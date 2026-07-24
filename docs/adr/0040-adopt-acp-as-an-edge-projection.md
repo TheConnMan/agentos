@@ -19,10 +19,10 @@ Adoption is far enough along to matter to us. The ACP agent registry lists
 roughly fifty agents, Claude Code and Codex among them, and OpenCode ships
 native ACP support. On the client side Zed and the JetBrains IDEs are native,
 with Neovim and Emacs carried by the community. The decisive fact is that
-**both** harnesses AgentOS wraps (ADR-0005's claude-agent-sdk adapter, ADR-0011's
+**both** harnesses Curie wraps (ADR-0005's claude-agent-sdk adapter, ADR-0011's
 OpenCode second harness) are already ACP-aware, so this is not swimming upstream.
 
-AgentOS has no editor-embedding story at all. Its clients are the CLI, the Slack
+Curie has no editor-embedding story at all. Its clients are the CLI, the Slack
 dispatcher, and the UI, and each new client surface re-implements turn rendering
 and approval prompting from scratch. ADR-0020 pushed rendering out of the channel
 interface, but it did not give the outside world a contract to render against.
@@ -43,7 +43,7 @@ can complete exactly once.
 Prior art was reviewed. xAI's Grok Build uses the ACP `SessionUpdate` enum as its
 single canonical turn type across TUI, headless, and IDE surfaces, and its ACP
 `request_permission` reverse-request is precisely the human-in-the-loop shape
-AgentOS already implements durably. That is a real signal about the protocol's
+Curie already implements durably. That is a real signal about the protocol's
 fitness, and also a warning about how much of Grok's approach transfers.
 
 ## Decision
@@ -53,16 +53,16 @@ fitness, and also a warning about how much of Grok's approach transfers.
 internal canonical type because it does a job ACP does not do: normalize across
 heterogeneous harnesses. Grok can make "ACP `SessionUpdate` is the one true type"
 work only because it is a single self-contained harness with nothing to normalize.
-AgentOS is not that, per ADR-0031, and collapsing the internal type into the wire
+Curie is not that, per ADR-0031, and collapsing the internal type into the wire
 type would put the cross-harness normalization back in every consumer.
 
-**2. Ship an ACP server entry point (stdio first).** A dedicated `agentos runner acp`
+**2. Ship an ACP server entry point (stdio first).** A dedicated `curie runner acp`
 subcommand speaks ACP over stdio and projects turns through decision 1. Remote
 transports stay out of scope until upstream stabilizes them. This buys embedding in
 Zed, the JetBrains IDEs, Neovim, and Emacs against an open standard rather than four
 bespoke integrations.
 
-**3. Project the gated-tool approval as ACP `request_permission`.** AgentOS already
+**3. Project the gated-tool approval as ACP `request_permission`.** Curie already
 owns the hard half: the durable `Approval`, the suspend, and the reconciler-driven
 resume (ADR-0034, ADR-0035). ACP supplies the wire contract for the easy half, so any
 ACP client can render an approval and carry a human's answer back without per-client
@@ -78,7 +78,7 @@ is explicitly rejected, because it re-creates the caller-asserted-actor defect
 ADR-0033 and ADR-0034 exist to close.
 
 **5. Do not adopt ACP's or Grok's session-persistence model.** File-per-session JSONL
-is a single-user local-workstation assumption and is wrong for AgentOS's concurrent
+is a single-user local-workstation assumption and is wrong for Curie's concurrent
 multi-tenant reality (ADR-0008, ADR-0013). Durable state stays exactly as it is; the
 projector is stateless.
 
@@ -120,8 +120,8 @@ model is a loud error, not a fallback.
   edge. Version skew is handled by decision 6, and containment to the edge is what
   decision 1 buys.
 - The honest tradeoff: **ACP's permission model is client-mediated by design**, which
-  is a weaker posture than AgentOS's API-side authorizer. Decision 4 is what
-  reconciles them, and it has a visible cost: AgentOS will not implement
+  is a weaker posture than Curie's API-side authorizer. Decision 4 is what
+  reconciles them, and it has a visible cost: Curie will not implement
   `request_permission` the way the spec naively reads. The client renders and relays;
   it does not decide. Clients whose UX assumes local authority over the answer will
   see a round trip and, sometimes, a denial.

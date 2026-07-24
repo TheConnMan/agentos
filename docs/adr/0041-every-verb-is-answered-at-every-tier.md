@@ -4,7 +4,7 @@ Date: 2026-07-16
 
 Status: Accepted
 
-Implements [#459](https://github.com/curie-eng/agentos/issues/459).
+Implements [#459](https://github.com/curie-eng/curie/issues/459).
 
 ## Context
 
@@ -12,7 +12,7 @@ The CLI has three tiers: `skill` (a local runner container against a bundle on
 disk), `local` (the compose stack and local platform API), and `cluster` (the
 deployed Helm release). Issue #446 added the inspection and governance verbs
 (`approvals`, `versions`, `memory`) to `local` and `cluster`. The `skill` tier
-did not get them, so `agentos skill versions` failed as a clap unknown
+did not get them, so `curie skill versions` failed as a clap unknown
 subcommand.
 
 For a human that reads as "wrong tier, try another". For the CLI's primary
@@ -25,11 +25,11 @@ Three of these concepts are genuinely different at the `skill` tier:
 
 - **approvals** exists. The bundle manifest's `approvalPolicy` declares gates,
   and the runner arms them from the bundle plus the
-  `AGENTOS_APPROVAL_REQUIRED_TOOLS` env override.
+  `CURIE_APPROVAL_REQUIRED_TOOLS` env override.
 - **versions** does not exist, by construction. A version exists only because
   the platform assigns a `bundle_sha256` and a `version_label` at deploy time.
   `skill up` runs whatever bytes are on disk; there is no release to name.
-- **memory** does not exist, by construction. `AGENTOS_MEMORY_REF` is never set
+- **memory** does not exist, by construction. `CURIE_MEMORY_REF` is never set
   at this tier, so the runner boots a `NullMemoryStore` and nothing persists.
 
 The tempting shortcut for the latter two is to implement them as empty results:
@@ -72,10 +72,10 @@ Concretely:
    while well-formed siblings stay armed; the CLI mirrors this exactly, skipping
    the empty gate and listing the rest. Because this tier's runner resolves its env
    once at container boot and there is no platform record to PATCH, `--gate` and
-   `--clear` mutate nothing; they emit the `AGENTOS_APPROVAL_REQUIRED_TOOLS`
+   `--clear` mutate nothing; they emit the `CURIE_APPROVAL_REQUIRED_TOOLS`
    assignment plus two caveats that keep it honest: the env applies only on a
-   re-boot that forwards it by name (`agentos skill up --secret
-   AGENTOS_APPROVAL_REQUIRED_TOOLS`, since a plain `skill up` forwards only the
+   re-boot that forwards it by name (`curie skill up --secret
+   CURIE_APPROVAL_REQUIRED_TOOLS`, since a plain `skill up` forwards only the
    model-credential names), and the runner *unions* the bundle's declared gates with the
    override, so `--gate` adds on top of them and `--clear` clears only the
    override. Omitting the second caveat would make the output lie by omission

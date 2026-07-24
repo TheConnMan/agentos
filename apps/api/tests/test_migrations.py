@@ -3,7 +3,7 @@
 A fresh install runs ``alembic upgrade head`` against a shared Postgres that
 Langfuse also uses; Langfuse's Prisma baseline (P3005) requires an EMPTY public
 schema on first boot, so a stray ``public.alembic_version`` crash-loops
-langfuse-web forever. env.py pins ``version_table_schema`` to the agentos schema
+langfuse-web forever. env.py pins ``version_table_schema`` to the curie schema
 in both run paths; these tests guard that property against regression. They run
 against the session's freshly-created, migrated disposable DB (conftest's
 ``migrated``), which is exactly a fresh-install shape.
@@ -11,8 +11,8 @@ against the session's freshly-created, migrated disposable DB (conftest's
 
 import asyncio
 
-from agentos_api.config import get_settings
-from agentos_api.db import SCHEMA
+from curie_api.config import get_settings
+from curie_api.db import SCHEMA
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -34,7 +34,7 @@ def test_alembic_version_lives_in_app_schema(migrated: None) -> None:
     schemas = _column(
         "SELECT schemaname FROM pg_tables WHERE tablename = 'alembic_version'"
     )
-    # Exactly one alembic_version, and it is in the agentos schema (never public).
+    # Exactly one alembic_version, and it is in the curie schema (never public).
     assert schemas == [SCHEMA], schemas
 
 

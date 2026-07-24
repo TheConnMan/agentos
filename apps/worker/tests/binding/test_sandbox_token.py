@@ -16,9 +16,9 @@ import hashlib
 import hmac
 import json
 
-from agentos_worker.sandbox_token import mint, verify
+from curie_worker.sandbox_token import mint, verify
 
-KEY = "agentos-dev-key"
+KEY = "curie-dev-key"
 AGENT = "00000000-0000-0000-0000-000000000001"
 EXP = 1893456000  # 2030-01-01, the golden known-answer exp
 FAR_FUTURE = 4102444800  # 2100-01-01, comfortably valid at test time

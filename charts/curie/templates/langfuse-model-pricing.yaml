@@ -1,0 +1,94 @@
+{{- if and .Values.langfuse.deploy .Values.langfuse.modelPricing.enabled }}
+{{/*
+Langfuse model-pricing seed (post-install/post-upgrade hook).
+
+Langfuse derives a generation's cost by matching its model name to a stored
+price row; with no matching row it reports calculatedTotalCost 0 even when the
+generation carries real token usage -- the Cost view then reads zero on a fresh
+install. This Job POSTs the configured price rows to the Langfuse public models
+API (/api/public/models) using the init project keys as basic auth, after
+Langfuse is ready (post-install/post-upgrade, hook-weight after the app).
+
+Idempotent: it lists existing models first and skips any whose name is already
+present, and treats a 409 from the create as success, so a re-upgrade is safe.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "curie.fullname" . }}-langfuse-model-pricing
+  labels:
+    {{- include "curie.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "curie.selectorLabels" (dict "root" . "component" "langfuse-model-pricing") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: model-pricing
+          image: {{ .Values.langfuse.modelPricing.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: LANGFUSE_BASE
+              value: http://{{ include "curie.langfuse.webHost" . }}:{{ .Values.langfuse.web.service.port }}
+            - name: LANGFUSE_PUBLIC_KEY
+              value: {{ .Values.langfuse.init.projectPublicKey | quote }}
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.langfuse.existingSecret | default (include "curie.secretName" .) }}
+                  key: langfuseInitProjectSecretKey
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              AUTH="${LANGFUSE_PUBLIC_KEY}:${LANGFUSE_SECRET_KEY}"
+
+              # Wait for the Langfuse public API to answer before seeding.
+              i=0
+              until curl -sf -o /dev/null "${LANGFUSE_BASE}/api/public/health"; do
+                i=$((i + 1))
+                if [ "$i" -ge 60 ]; then
+                  echo "FATAL: Langfuse API not ready after 60 attempts" >&2
+                  exit 1
+                fi
+                echo "waiting for Langfuse API (${i})..."
+                sleep 5
+              done
+
+              existing=$(curl -s -u "$AUTH" "${LANGFUSE_BASE}/api/public/models?limit=100" || echo "")
+
+              create_model() {
+                name="$1"; pattern="$2"; inp="$3"; outp="$4"
+                if printf '%s' "$existing" | grep -q "\"modelName\":\"${name}\""; then
+                  echo "model ${name} already present; skipping"
+                  return 0
+                fi
+                out=$(curl -s -w '\n%{http_code}' -u "$AUTH" \
+                  -X POST "${LANGFUSE_BASE}/api/public/models" \
+                  -H 'Content-Type: application/json' \
+                  -d "{\"modelName\":\"${name}\",\"matchPattern\":\"${pattern}\",\"unit\":\"TOKENS\",\"inputPrice\":${inp},\"outputPrice\":${outp}}")
+                code=$(printf '%s' "$out" | tail -n1)
+                body=$(printf '%s' "$out" | sed '$d')
+                case "$code" in
+                  200|201) echo "created model ${name} (in ${inp} / out ${outp} per token)" ;;
+                  409)     echo "model ${name} already exists (409); ok" ;;
+                  *) echo "FATAL: create ${name} failed (${code}): ${body}" >&2; exit 1 ;;
+                esac
+              }
+
+              {{- range .Values.langfuse.modelPricing.models }}
+              create_model {{ .modelName | quote }} {{ .matchPattern | quote }} {{ .inputPrice }} {{ .outputPrice }}
+              {{- end }}
+
+              echo "RESULT: PASS - Langfuse model pricing seeded."
+          resources:
+            {{- toYaml .Values.langfuse.modelPricing.resources | nindent 12 }}
+{{- end }}

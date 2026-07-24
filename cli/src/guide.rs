@@ -1,4 +1,4 @@
-//! `agentos guide`: the self-describing harness primer (ADR-0021, issue #322).
+//! `curie guide`: the self-describing harness primer (ADR-0021, issue #322).
 //!
 //! Emits a compact, self-contained "how to drive this harness" document for a
 //! coding agent, modeled on `SKILL.md`: ordered by what the agent needs first,
@@ -11,8 +11,8 @@
 //! default and the `--json` structured variant both render from it, so a command
 //! printed by one is byte-identical in the other and the drift test in
 //! `cli/tests/guide.rs` can validate the printed commands against the CLI's own
-//! `agentos schema` manifest. Every printed `agentos ...` invocation is a real
-//! command path -- prose refers to the product as "AgentOS".
+//! `curie schema` manifest. Every printed `curie ...` invocation is a real
+//! command path -- prose refers to the product as "Curie".
 
 use anyhow::Result;
 use serde::Serialize;
@@ -67,36 +67,36 @@ pub struct Recovery {
 /// The authored primer. Content lives here so Markdown and JSON never diverge.
 pub fn primer() -> Primer {
     Primer {
-        harness: "agentos",
-        summary: "AgentOS is a harness: it guarantees that a bundle behaving in a local chat \
+        harness: "curie",
+        summary: "Curie is a harness: it guarantees that a bundle behaving in a local chat \
                   behaves identically as a deployed local process and again on Kubernetes. You \
                   author the skill; the harness owns deployment parity.",
         verify_first: VerifyFirst {
             why: "Your training data is stale. Confirm a command exists before you run it -- \
                   never invoke one you have not seen in the manifest or --help.",
-            commands: vec!["agentos schema", "agentos skill --help"],
+            commands: vec!["curie schema", "curie skill --help"],
         },
         parity_ladder: vec![
             Rung {
                 tier: "init",
-                command: "agentos init deal-desk",
+                command: "curie init deal-desk",
                 purpose: "Scaffold a bundle (Claude Code plugin shape) with an evals/cases.json seed.",
             },
             Rung {
                 tier: "skill",
-                command: "agentos skill up --fake-model",
+                command: "curie skill up --fake-model",
                 purpose: "Boot the runner alone, offline, no credential -- the fastest authoring loop.",
             },
             Rung {
                 tier: "skill",
-                command: "agentos skill check",
+                command: "curie skill check",
                 purpose: "Prove the bundle's MCP tools actually load -- offline, no credential. \
                           A green --fake-model does NOT cover this (the fake model never calls \
                           MCP tools).",
             },
             Rung {
                 tier: "skill",
-                command: "agentos skill eval",
+                command: "curie skill eval",
                 purpose: "Run evals/cases.json in-process. This is the promotion gate -- but only \
                           under a real credential, where the cases are graded. Under --fake-model \
                           it reports plumbing_ok: the fake returns one canned reply whatever the \
@@ -105,52 +105,52 @@ pub fn primer() -> Primer {
             },
             Rung {
                 tier: "skill",
-                command: "agentos skill message \"hello\"",
+                command: "curie skill message \"hello\"",
                 purpose: "Drive one synthetic turn and stream the reply.",
             },
             Rung {
                 tier: "skill",
-                command: "agentos skill down",
+                command: "curie skill down",
                 purpose: "Stop and remove the runner.",
             },
             Rung {
                 tier: "local",
-                command: "agentos local up",
+                command: "curie local up",
                 purpose: "Bring up the full platform via compose (queue, worker, sandbox), still zero Slack.",
             },
             Rung {
                 tier: "local",
-                command: "agentos local deploy",
+                command: "curie local deploy",
                 purpose: "Push the identical bundle to the local platform API.",
             },
             Rung {
                 tier: "local",
-                command: "agentos local message \"hello\"",
+                command: "curie local message \"hello\"",
                 purpose: "Drive the real product loop end to end -- the path a Slack mention would take.",
             },
             Rung {
                 tier: "local",
-                command: "agentos local eval",
+                command: "curie local eval",
                 purpose: "Re-run the SAME evals/cases.json through the local tier -- the per-tier parity gate. A pass here that failed at skill (or vice versa) is the harness catching an environment bug.",
             },
             Rung {
                 tier: "cluster",
-                command: "agentos cluster up",
+                command: "curie cluster up",
                 purpose: "Install the release on Kubernetes via Helm.",
             },
             Rung {
                 tier: "cluster",
-                command: "agentos cluster deploy",
+                command: "curie cluster deploy",
                 purpose: "Ship the same bundle to the cluster.",
             },
             Rung {
                 tier: "cluster",
-                command: "agentos cluster message \"hello\"",
+                command: "curie cluster message \"hello\"",
                 purpose: "Drive the same loop on the cluster.",
             },
             Rung {
                 tier: "cluster",
-                command: "agentos cluster eval",
+                command: "curie cluster eval",
                 purpose: "Re-assert the SAME evals/cases.json on the cluster with the same grader -- the per-tier parity gate at the tier that matters most before prod.",
             },
         ],
@@ -172,15 +172,15 @@ pub fn primer() -> Primer {
                 question: "authoring a bundle: interview, not prompts",
                 answer: "init never prompts interactively. To author a new bundle, interview the \
                          human, write an agent-spec.json (name, description, skills, connectors, \
-                         evals), then run `agentos init --from-spec agent-spec.json` -- the CLI \
+                         evals), then run `curie init --from-spec agent-spec.json` -- the CLI \
                          scaffolds the bundle deterministically from that spec.",
             },
             Decision {
                 question: "how an eval gates promotion",
-                answer: "evals/cases.json is the contract. `agentos skill eval` must be green before \
+                answer: "evals/cases.json is the contract. `curie skill eval` must be green before \
                          you deploy -- green under a real credential, since the fake model grades \
                          nothing and only reports plumbing_ok; \
-                         `agentos local eval` and `agentos cluster eval` re-run the SAME \
+                         `curie local eval` and `curie cluster eval` re-run the SAME \
                          cases with the SAME grader at each tier (the per-tier parity gate), so a \
                          suite that is green at skill can be re-asserted verbatim once deployed. \
                          Merging to main promotes to prod (git flow is the deploy model). Never \
@@ -190,33 +190,33 @@ pub fn primer() -> Primer {
         landmines: vec![
             Landmine {
                 title: "Fake vs live model is symmetric across skill and local",
-                detail: "`agentos skill up` and `agentos local up` both run the real model when a credential is present and the fake model otherwise; `agentos skill up --fake-model` or AGENTOS_FAKE_MODEL=1 forces the offline fake at either tier.",
+                detail: "`curie skill up` and `curie local up` both run the real model when a credential is present and the fake model otherwise; `curie skill up --fake-model` or CURIE_FAKE_MODEL=1 forces the offline fake at either tier.",
             },
             Landmine {
                 title: "A real model in-cluster needs its provider's egress opened",
-                detail: "The runner sandbox is default-deny egress, so `agentos cluster up` with a credential is still sealed and the model unreachable until you pass --allow-egress-host <provider> (anthropic/openrouter); a web-fetching skill additionally needs --allow-web-egress <CIDR> for its hosts.",
+                detail: "The runner sandbox is default-deny egress, so `curie cluster up` with a credential is still sealed and the model unreachable until you pass --allow-egress-host <provider> (anthropic/openrouter); a web-fetching skill additionally needs --allow-web-egress <CIDR> for its hosts.",
             },
             Landmine {
                 title: "secretKeyRef env vars resolve once, at pod start",
-                detail: "A connect that rotates a secret must also roll the pod; `agentos cluster comms` does this for you.",
+                detail: "A connect that rotates a secret must also roll the pod; `curie cluster comms` does this for you.",
             },
             Landmine {
                 title: "You wire the non-secret setup; the human supplies only secrets and browser-made apps",
-                detail: "When you are asked to get a bundle running, do the plumbing yourself -- source the bundle's dotenv, run `agentos local up`, `agentos local deploy`, and `agentos local comms --slack`, then tear down -- rather than handing the human a shell checklist to copy-paste. Two parts are irreducibly manual and stay with the human: supplying the actual secret VALUES (never type a credential or API key yourself) and creating an external app in a browser to mint its tokens (e.g. the Slack app). Automate everything between. If a credential already lives in the environment or the bundle's own `.env`, use it instead of asking for it to be exported.",
+                detail: "When you are asked to get a bundle running, do the plumbing yourself -- source the bundle's dotenv, run `curie local up`, `curie local deploy`, and `curie local comms --slack`, then tear down -- rather than handing the human a shell checklist to copy-paste. Two parts are irreducibly manual and stay with the human: supplying the actual secret VALUES (never type a credential or API key yourself) and creating an external app in a browser to mint its tokens (e.g. the Slack app). Automate everything between. If a credential already lives in the environment or the bundle's own `.env`, use it instead of asking for it to be exported.",
             },
             Landmine {
                 title: "A real-model `cluster up` fails closed without a gVisor runtime",
-                detail: "On a cluster with no `runsc` RuntimeClass, the default `security.gvisor.mode=auto` renders a blocking enforcement preflight for a real (non-fake) model, so `agentos cluster up` fails closed instead of running runner pods on the host kernel. Install anyway with `agentos cluster up --set security.gvisor.mode=off` (no kernel isolation, knowingly), use `--fake-model` (the sealed path skips the preflight), or install runsc on the nodes. This is the security posture, not a bug.",
+                detail: "On a cluster with no `runsc` RuntimeClass, the default `security.gvisor.mode=auto` renders a blocking enforcement preflight for a real (non-fake) model, so `curie cluster up` fails closed instead of running runner pods on the host kernel. Install anyway with `curie cluster up --set security.gvisor.mode=off` (no kernel isolation, knowingly), use `--fake-model` (the sealed path skips the preflight), or install runsc on the nodes. This is the security posture, not a bug.",
             },
         ],
         recovery: vec![
             Recovery {
                 symptom: "\"platform API ... unreachable\" on a local deploy or message",
-                fix: "The stack is down. Run `agentos local up`, then retry.",
+                fix: "The stack is down. Run `curie local up`, then retry.",
             },
             Recovery {
-                symptom: "`agentos cluster up` hangs ~2 min then dies with `job agentos-preflight-gvisor failed: DeadlineExceeded`",
-                fix: "A real-model install on a cluster with no `runsc` RuntimeClass fails closed under `security.gvisor.mode=auto`. Opt out with `agentos cluster up --set security.gvisor.mode=off`, or use `--fake-model`, or install runsc on the nodes.",
+                symptom: "`curie cluster up` hangs ~2 min then dies with `job curie-preflight-gvisor failed: DeadlineExceeded`",
+                fix: "A real-model install on a cluster with no `runsc` RuntimeClass fails closed under `security.gvisor.mode=auto`. Opt out with `curie cluster up --set security.gvisor.mode=off`, or use `--fake-model`, or install runsc on the nodes.",
             },
             Recovery {
                 symptom: "\"(no response)\" or an empty reply",
@@ -224,11 +224,11 @@ pub fn primer() -> Primer {
             },
             Recovery {
                 symptom: "the agent answers but never calls your MCP tools",
-                fix: "Run `agentos skill check` -- a RED verdict names the server that failed to load and how to fix the declaration.",
+                fix: "Run `curie skill check` -- a RED verdict names the server that failed to load and how to fix the declaration.",
             },
             Recovery {
                 symptom: "a command \"does not exist\"",
-                fix: "You trusted training over the manifest. Re-run `agentos schema` and use the confirmed spelling.",
+                fix: "You trusted training over the manifest. Re-run `curie schema` and use the confirmed spelling.",
             },
         ],
     }
@@ -244,11 +244,11 @@ fn tier_caption(tier: &'static str) -> &'static str {
     }
 }
 
-/// Render the primer as Markdown. Every `agentos ...` token printed here is a
+/// Render the primer as Markdown. Every `curie ...` token printed here is a
 /// real command; the drift test enforces that against the live manifest.
 fn render_markdown(p: &Primer) -> String {
     let mut s = String::new();
-    s.push_str("# AgentOS harness primer\n\n");
+    s.push_str("# Curie harness primer\n\n");
     s.push_str(p.summary);
     s.push_str(
         "\n\nYou are a coding agent driving this harness. This primer carries only what you \
@@ -301,18 +301,18 @@ fn render_markdown(p: &Primer) -> String {
         s.push_str(&format!("- **{}**\n  {}\n\n", r.symptom, r.fix));
     }
 
-    s.push_str("When anything is uncertain, confirm it against `agentos schema` before you act.\n");
+    s.push_str("When anything is uncertain, confirm it against `curie schema` before you act.\n");
     s
 }
 
 /// The primer rendered to Markdown. One seam for callers that need the same
-/// authored body the `agentos guide` default prints -- the scaffold's harness
+/// authored body the `curie guide` default prints -- the scaffold's harness
 /// skill renders from this so the two can never diverge (D2 anti-drift).
 pub fn primer_markdown() -> String {
     render_markdown(&primer())
 }
 
-/// `agentos guide`: print the primer. Markdown to stdout by default; the global
+/// `curie guide`: print the primer. Markdown to stdout by default; the global
 /// `--json` flag prints the structured variant to stdout via the shared
 /// machine-output path (any human text would go to stderr).
 pub fn run() -> Result<()> {
@@ -320,7 +320,7 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-/// Output of `agentos guide` (#474): the primer, structured under `--json` and
+/// Output of `curie guide` (#474): the primer, structured under `--json` and
 /// rendered as markdown otherwise, routed through the one `Ui::emit` point.
 struct GuideOutput {
     primer: Primer,

@@ -19,7 +19,7 @@ decision on record, not just a doc.
 
 ## Context
 
-AgentOS is an opinionated core (dispatcher, queue, worker kernel, sandbox
+Curie is an opinionated core (dispatcher, queue, worker kernel, sandbox
 substrate, runner behind the frozen ACI, the API's git-flow engine, the UI)
 surrounded by six jobs a production agent platform must do, each of which has one
 or more plausible vendors: observability, evals, blob storage, a relational
@@ -64,13 +64,13 @@ honestly is not clean yet, is catalogued in
   the cousin of ADR-0007 (adopt-not-build): 0007 governs what we build versus
   adopt, this governs how we seam what we built and when to harden a seam.
 - The open "is this seam a real swap axis" epics
-  ([#83](https://github.com/curie-eng/agentos/issues/83),
-  [#84](https://github.com/curie-eng/agentos/issues/84),
-  [#85](https://github.com/curie-eng/agentos/issues/85),
-  [#86](https://github.com/curie-eng/agentos/issues/86)) are answered by this
+  ([#83](https://github.com/curie-eng/curie/issues/83),
+  [#84](https://github.com/curie-eng/curie/issues/84),
+  [#85](https://github.com/curie-eng/curie/issues/85),
+  [#86](https://github.com/curie-eng/curie/issues/86)) are answered by this
   discipline: a seam gets promoted to a contract when a user needs the swap, not
   before. Backfilling `INTERFACE.md` at each seam
-  ([#53](https://github.com/curie-eng/agentos/issues/53)) documents the black
+  ([#53](https://github.com/curie-eng/curie/issues/53)) documents the black
   lines without prematurely abstracting them.
 - A PR that adds a speculative abstraction layer ahead of a real second
   implementation is violating this ADR, even when the code is clean.

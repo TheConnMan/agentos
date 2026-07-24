@@ -17,11 +17,11 @@ import zipfile
 from typing import Any
 
 import pytest
-from agentos_api import crud
-from agentos_api import deploy as deploy_module
-from agentos_api.config import Settings, get_settings
-from agentos_api.routers import bundles as bundles_router
-from agentos_api.storage import BundleStore
+from curie_api import crud
+from curie_api import deploy as deploy_module
+from curie_api.config import Settings, get_settings
+from curie_api.routers import bundles as bundles_router
+from curie_api.storage import BundleStore
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 MANIFEST = '{"name": "demo-plugin", "version": "0.1.0"}'

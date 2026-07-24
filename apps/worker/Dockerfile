@@ -1,9 +1,9 @@
-# AgentOS worker image (concurrency kernel + sandbox substrate + eval runner).
+# Curie worker image (concurrency kernel + sandbox substrate + eval runner).
 #
 # BUILD FROM THE REPO ROOT (uv workspace); see runner/Dockerfile and
 # apps/api/Dockerfile for the shared pattern:
 #
-#   docker build -f apps/worker/Dockerfile -t agentos-worker .
+#   docker build -f apps/worker/Dockerfile -t curie-worker .
 #
 # The worker drives the Kubernetes API to claim/manage sandboxes, so its
 # Deployment carries a ServiceAccount + RBAC (see the chart). No inbound HTTP.
@@ -14,7 +14,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never
 COPY . .
-RUN uv sync --frozen --no-dev --no-editable --package agentos-worker
+RUN uv sync --frozen --no-dev --no-editable --package curie-worker
 
 FROM python:3.13-slim
 RUN groupadd -g 1000 app && useradd -u 1000 -g app -m -d /home/app app
@@ -22,4 +22,4 @@ WORKDIR /app
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 USER 1000
-CMD ["python", "-m", "agentos_worker"]
+CMD ["python", "-m", "curie_worker"]

@@ -6,9 +6,9 @@ FastAPI wiring are exercised for real.
 
 from typing import Any
 
-from agentos_api.deps import get_langfuse
-from agentos_api.langfuse import matching_traces
-from agentos_api.main import create_app
+from curie_api.deps import get_langfuse
+from curie_api.langfuse import matching_traces
+from curie_api.main import create_app
 from fastapi.testclient import TestClient
 
 
@@ -27,7 +27,7 @@ class FakeLangfuse:
         self, limit: int, name_contains: str | None = None
     ) -> list[dict[str, Any]]:
         self.list_calls.append((limit, name_contains))
-        return [{"id": "t1", "name": "agentos-run:agent-x-thread-1"}]
+        return [{"id": "t1", "name": "curie-run:agent-x-thread-1"}]
 
 
 def _app_with(observations: list[dict[str, Any]]) -> TestClient:
@@ -61,7 +61,7 @@ def test_get_trace_returns_reconstructed_tree(
 def test_get_trace_surfaces_sandbox_id_from_observation(
     auth_headers: dict[str, str],
 ) -> None:
-    # The endpoint hoists agentos.sandbox_id onto the typed TraceTree field even
+    # The endpoint hoists curie.sandbox_id onto the typed TraceTree field even
     # when Langfuse carries it only on an observation (not the trace).
     observations = [
         {
@@ -69,7 +69,7 @@ def test_get_trace_surfaces_sandbox_id_from_observation(
             "type": "SPAN",
             "name": "agent.run",
             "startTime": "1",
-            "metadata": {"agentos.sandbox_id": "sbx-proxy"},
+            "metadata": {"curie.sandbox_id": "sbx-proxy"},
         },
     ]
     with _app_with(observations) as client:
@@ -175,11 +175,11 @@ def test_list_traces_with_agent_id_filters_by_the_agent_token(
 
 def test_matching_traces_keeps_only_the_token_and_caps_at_limit() -> None:
     traces = [
-        {"id": "1", "name": "agentos-run:agent-A-thread-1"},
-        {"id": "2", "name": "agentos-run:agent-B-thread-1"},
-        {"id": "3", "name": "agentos-run:agent-A-thread-2"},
+        {"id": "1", "name": "curie-run:agent-A-thread-1"},
+        {"id": "2", "name": "curie-run:agent-B-thread-1"},
+        {"id": "3", "name": "curie-run:agent-A-thread-2"},
         {"id": "4", "name": None},  # defensive: non-string name is skipped
-        {"id": "5", "name": "agentos-run:agent-A-thread-3"},
+        {"id": "5", "name": "curie-run:agent-A-thread-3"},
     ]
     matched = matching_traces(traces, "agent-A", limit=2)
     assert [t["id"] for t in matched] == ["1", "3"]  # newest-first order preserved, capped

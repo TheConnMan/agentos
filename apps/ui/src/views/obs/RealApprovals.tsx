@@ -32,7 +32,7 @@ const STATUS_FILTERS: [string, string][] = [
 
 // Persist the resolving operator's identity so they need not retype it each
 // time; resolved_by is required server-side and gates self-approval.
-const OPERATOR_KEY = "agentos.approvalOperator";
+const OPERATOR_KEY = "curie.approvalOperator";
 
 function loadOperator(): string {
   try {

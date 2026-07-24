@@ -13,14 +13,14 @@ import uuid
 
 import pytest
 import redis.asyncio as aioredis
-from agentos_api.graveyardwatcher import GraveyardWatcher
-from agentos_test_support.valkey import (
+from curie_api.graveyardwatcher import GraveyardWatcher
+from curie_test_support.valkey import (
     VALKEY_HOST as _VALKEY_HOST,
 )
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     VALKEY_PORT as _VALKEY_PORT,
 )
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     VALKEY_PW as _VALKEY_PW,
 )
 
@@ -48,7 +48,7 @@ async def _dead_letter(
 
 def test_alerts_once_per_new_dead_letter_and_seeds_at_tail() -> None:
     async def go() -> None:
-        stream = f"test:agentos:runs:dead:{uuid.uuid4().hex}"
+        stream = f"test:curie:runs:dead:{uuid.uuid4().hex}"
         client = _client()
         watcher = GraveyardWatcher(client, stream=stream, interval_seconds=0.01)
         try:
@@ -77,7 +77,7 @@ def test_alerts_once_per_new_dead_letter_and_seeds_at_tail() -> None:
 
 def test_run_forever_alerts_a_new_dead_letter_then_stops() -> None:
     async def go() -> None:
-        stream = f"test:agentos:runs:dead:{uuid.uuid4().hex}"
+        stream = f"test:curie:runs:dead:{uuid.uuid4().hex}"
         client = _client()
         watcher = GraveyardWatcher(client, stream=stream, interval_seconds=0.02)
         task = asyncio.create_task(watcher.run_forever())

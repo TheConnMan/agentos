@@ -6,9 +6,9 @@ Status: Accepted
 
 ## Context
 
-`agentos cluster down` runs a two-step teardown: `helm uninstall` followed by a
+`curie cluster down` runs a two-step teardown: `helm uninstall` followed by a
 label-scoped namespace sweep that deletes only the namespaces THIS release
-created (`agentos.dev/created-by=<release>`, the ownership label introduced by
+created (`curietech.ai/created-by=<release>`, the ownership label introduced by
 issue #707). The sweep is Helm-independent by design: it is what actually stops
 compute (runtime sandboxes, PVCs, job pods Helm does not own).
 

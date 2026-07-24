@@ -1,4 +1,4 @@
-//! `agentos cluster up | cluster status | cluster down`: the operator
+//! `curie cluster up | cluster status | cluster down`: the operator
 //! day-1 lifecycle, wrapping the Helm chart and `kubectl` the way linkerd or
 //! cilium wrap theirs -- a deliberately thin CLI over the chart, which stays the
 //! source of truth. Every verb shells out to the `helm`/`kubectl` binaries; the
@@ -186,7 +186,7 @@ impl SecretValuesFileGuard {
         let body = serde_json::to_vec(&doc).context("serializing secret helm values")?;
 
         let mut path = std::env::temp_dir();
-        path.push(format!("agentos-helm-values-{}.yaml", uuid::Uuid::new_v4()));
+        path.push(format!("curie-helm-values-{}.yaml", uuid::Uuid::new_v4()));
 
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create_new(true);
@@ -323,15 +323,15 @@ pub struct UpOpts {
     /// Whether `--fake-model` was passed (forces the sealed install and
     /// suppresses the fake-model warning even when the env credential is set).
     pub fake_model: bool,
-    /// The model credential to install with, resolved from `AGENTOS_CREDENTIALS`
-    /// (or the deprecated `AGENTOS_MODEL_CREDENTIALS`). `Some(non-empty)` enables the real model;
+    /// The model credential to install with, resolved from `CURIE_CREDENTIALS`
+    /// (or the deprecated `CURIE_MODEL_CREDENTIALS`). `Some(non-empty)` enables the real model;
     /// `None` installs sealed (fake model). A credential alone opens NO egress --
     /// the model stays unreachable behind the fail-closed sandbox until a
     /// provider (`allow_egress_host`) or a raw range (`allow_web_egress`) is
     /// named (#362).
     pub credentials: Option<String>,
     pub local_model: Option<String>,
-    /// The shell `AGENTOS_MODEL` resolved by the caller (`None` when unset or
+    /// The shell `CURIE_MODEL` resolved by the caller (`None` when unset or
     /// empty), used to default `agentSandbox.runner.model` for cross-tier parity
     /// with `local up` (#361).
     pub model: Option<String>,
@@ -389,25 +389,25 @@ pub fn resolve_up_credentials(fake_model: bool, env_value: Option<String>) -> Op
 }
 
 /// The operator's model credential from the shell for `cluster up`, canonically
-/// `AGENTOS_CREDENTIALS` -- the same name the runtime plane (runner/worker/chart)
-/// uses everywhere. The CLI's historical `AGENTOS_MODEL_CREDENTIALS` is accepted
+/// `CURIE_CREDENTIALS` -- the same name the runtime plane (runner/worker/chart)
+/// uses everywhere. The CLI's historical `CURIE_MODEL_CREDENTIALS` is accepted
 /// as a deprecated alias for one release, with a warning naming the replacement,
 /// so an operator who set the one name for `skill up` isn't met with a silent
 /// no-op at `cluster up` (#496). Returns None when neither is set non-empty.
 pub fn model_credential_env() -> Option<String> {
-    if let Some(value) = std::env::var("AGENTOS_CREDENTIALS")
+    if let Some(value) = std::env::var("CURIE_CREDENTIALS")
         .ok()
         .filter(|v| !v.is_empty())
     {
         return Some(value);
     }
-    if let Some(value) = std::env::var("AGENTOS_MODEL_CREDENTIALS")
+    if let Some(value) = std::env::var("CURIE_MODEL_CREDENTIALS")
         .ok()
         .filter(|v| !v.is_empty())
     {
         eprintln!(
-            "warning: AGENTOS_MODEL_CREDENTIALS is deprecated and will be removed in a future \
-             release; set AGENTOS_CREDENTIALS instead."
+            "warning: CURIE_MODEL_CREDENTIALS is deprecated and will be removed in a future \
+             release; set CURIE_CREDENTIALS instead."
         );
         return Some(value);
     }
@@ -433,14 +433,14 @@ fn explicit_runner_model(set: &[String]) -> Option<&str> {
         .next_back()
 }
 
-/// Fail loud when the shell `AGENTOS_MODEL` and an explicit
+/// Fail loud when the shell `CURIE_MODEL` and an explicit
 /// `--set agentSandbox.runner.model=` disagree, so the runner model is never
 /// silently ambiguous (#361).
 pub fn check_runner_model_conflict(model: Option<&str>, set: &[String]) -> Result<()> {
     if let (Some(y), Some(x)) = (model, explicit_runner_model(set)) {
         if x != y {
             bail!(
-                "conflicting sandbox runner model: AGENTOS_MODEL=`{y}` but \
+                "conflicting sandbox runner model: CURIE_MODEL=`{y}` but \
                  `--set {RUNNER_MODEL_KEY}={x}` was also passed. Remove one so the \
                  runner model is unambiguous."
             );
@@ -712,7 +712,7 @@ pub fn model_egress_status_lines(
         ));
         lines.push((
             false,
-            "resolved provider IPs can rotate; re-run `agentos cluster up` if model calls start failing".into(),
+            "resolved provider IPs can rotate; re-run `curie cluster up` if model calls start failing".into(),
         ));
     }
     if credentials_present {
@@ -728,7 +728,7 @@ pub fn model_egress_status_lines(
         lines.push((
             true,
             format!(
-                "no AGENTOS_CREDENTIALS set; installing with the fake model{}",
+                "no CURIE_CREDENTIALS set; installing with the fake model{}",
                 if any_egress_opened {
                     ""
                 } else {
@@ -738,7 +738,7 @@ pub fn model_egress_status_lines(
         ));
         lines.push((
             false,
-            "Replies will be canned. Set AGENTOS_CREDENTIALS (an Anthropic API key) and re-run `agentos cluster up` to enable the real model.".into(),
+            "Replies will be canned. Set CURIE_CREDENTIALS (an Anthropic API key) and re-run `curie cluster up` to enable the real model.".into(),
         ));
     }
     lines
@@ -751,7 +751,7 @@ pub fn model_egress_status_lines(
 /// supplies a strong random for each on a fresh install so the release never
 /// boots on a credential that lives in this public repo. Slack tokens and the
 /// model credential are deliberately absent -- they are operator-supplied via
-/// their own paths (`cluster comms`, `AGENTOS_MODEL_CREDENTIALS`), not
+/// their own paths (`cluster comms`, `CURIE_MODEL_CREDENTIALS`), not
 /// generated. `langfuse.encryptionKey` must be exactly 64 hex chars, so its 32
 /// bytes are load-bearing.
 const REQUIRED_SECRETS: &[(&str, usize)] = &[
@@ -956,7 +956,7 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
     if !o.secrets.is_empty() {
         args.push(CmdArg::SecretValuesFile(o.secrets.clone()));
     }
-    // Default the sandbox runner model from the shell `AGENTOS_MODEL` for
+    // Default the sandbox runner model from the shell `CURIE_MODEL` for
     // cross-tier parity with `local up` (#361). Injected before the passthrough
     // `--set`s so an explicit operator `--set agentSandbox.runner.model=` keeps
     // helm precedence; suppressed when the operator already pinned it (a
@@ -974,7 +974,7 @@ pub fn up_commands(o: &UpOpts) -> Vec<OpsCommand> {
     vec![OpsCommand::new("helm", args)]
 }
 
-/// The read-only commands `agentos cluster status` runs (and prints under `--dry-run`).
+/// The read-only commands `curie cluster status` runs (and prints under `--dry-run`).
 pub fn status_commands(o: &CommonOpts) -> Vec<OpsCommand> {
     vec![
         helm_status_cmd(o),
@@ -1052,7 +1052,7 @@ pub(crate) fn nodes_cmd() -> OpsCommand {
 /// `helm uninstall` then a namespace sweep of only the namespaces THIS release
 /// created (runtime sandboxes, PVCs and job pods Helm does not own). #707: the
 /// sweep is scoped by the release ownership label `up` stamped
-/// (`agentos.dev/created-by=<release>`) rather than a hardcoded namespace pair,
+/// (`curietech.ai/created-by=<release>`) rather than a hardcoded namespace pair,
 /// so a pre-existing (unlabeled) namespace is never deleted. `--ignore-not-found`
 /// keeps a partial teardown re-runnable and the label selector tolerates zero
 /// matches. CRDs are never targeted (retention is by-construction).
@@ -1073,7 +1073,7 @@ pub fn down_commands(o: &CommonOpts) -> Vec<OpsCommand> {
                 plain("delete"),
                 plain("namespace"),
                 plain("-l"),
-                plain(format!("agentos.dev/created-by={}", o.release)),
+                plain(format!("curietech.ai/created-by={}", o.release)),
                 plain("--ignore-not-found"),
             ],
         ),
@@ -1092,7 +1092,7 @@ enum HelmOutcome {
 /// Outcome of the label-scoped namespace sweep step. `NoMatch` (#768) is the
 /// zero-match case: the selector's `kubectl delete` exits 0 (success) but
 /// deleted nothing, because it printed nothing to stdout. This happens by
-/// design when AgentOS was installed into a PRE-EXISTING namespace (#707
+/// design when Curie was installed into a PRE-EXISTING namespace (#707
 /// deliberately leaves that namespace unlabeled, so it is never a sweep
 /// target). `NoMatch` counts as a completed step, same as `Removed`
 /// (`outstanding_steps` never re-queues it), but it is NOT the same as
@@ -1343,7 +1343,7 @@ fn ownership_label_commands(o: &CommonOpts, namespace_existed: bool) -> Vec<OpsC
             plain("label"),
             plain("namespace"),
             plain(&o.namespace),
-            plain(format!("agentos.dev/created-by={}", o.release)),
+            plain(format!("curietech.ai/created-by={}", o.release)),
             plain("--overwrite"),
         ],
     )]
@@ -1499,8 +1499,8 @@ impl crate::ui::CliOutput for ClusterUpOutput {
         match self {
             ClusterUpOutput::DryRun(plan) => plan.render(ui),
             ClusterUpOutput::Up { .. } => {
-                ui.payload("agentos is up");
-                ui.note("Run `agentos cluster status` for pod health and URLs.");
+                ui.payload("curie is up");
+                ui.note("Run `curie cluster status` for pod health and URLs.");
             }
         }
     }
@@ -1510,7 +1510,7 @@ pub async fn up(mut opts: UpOpts) -> Result<ClusterUpOutput> {
     let ui = crate::ui::ui();
     validate_web_egress_cidrs(&opts.allow_web_egress)
         .context("invalid --allow-web-egress value")?;
-    // Fail loud (even under --dry-run) if AGENTOS_MODEL and an explicit
+    // Fail loud (even under --dry-run) if CURIE_MODEL and an explicit
     // `--set agentSandbox.runner.model=` disagree (#361).
     check_runner_model_conflict(opts.model.as_deref(), &opts.set)?;
     // Each `--allow-egress-host` must name a known provider. An unknown value is
@@ -1745,7 +1745,7 @@ impl crate::ui::CliOutput for ClusterStatusOutput {
             ClusterStatusOutput::DryRun(plan) => plan.render(ui),
             ClusterStatusOutput::Status(s) => {
                 ui.payload(&format!(
-                    "agentos · namespace {} · revision {} · {}",
+                    "curie · namespace {} · revision {} · {}",
                     s.namespace, s.revision, s.release_state
                 ));
                 if let Some(note) = &s.release_missing_note {
@@ -1870,7 +1870,7 @@ impl crate::ui::CliOutput for ClusterDownOutput {
             ClusterDownOutput::DryRun(plan) => plan.render(ui),
             ClusterDownOutput::Aborted => ui.note("aborted"),
             ClusterDownOutput::Down { .. } => {
-                ui.payload("agentos is down");
+                ui.payload("curie is down");
                 ui.note("The agents.x-k8s.io CRDs are left in place intentionally.");
             }
         }
@@ -1886,12 +1886,12 @@ pub async fn down(opts: DownOpts) -> Result<ClusterDownOutput> {
         }));
     }
     ui.warn(&format!(
-        "this uninstalls release '{0}' and deletes the namespaces it created (labeled agentos.dev/created-by={0}), leaving any pre-existing namespaces untouched",
+        "this uninstalls release '{0}' and deletes the namespaces it created (labeled curietech.ai/created-by={0}), leaving any pre-existing namespaces untouched",
         opts.common.release
     ));
     if !opts.yes
         && !confirm(&format!(
-            "This uninstalls release '{0}' and deletes the namespaces it created (labeled agentos.dev/created-by={0}). Continue? [y/N] ",
+            "This uninstalls release '{0}' and deletes the namespaces it created (labeled curietech.ai/created-by={0}). Continue? [y/N] ",
             opts.common.release
         ))?
     {
@@ -2146,7 +2146,7 @@ fn api_key_usage_err(msg: impl Into<String>) -> anyhow::Error {
 /// kubectl's `base64decode` so the plaintext never lands in argv (#524). The
 /// governance verbs use this so they authenticate against a REAL release whose
 /// `api.apiKey` was randomized at `cluster up`, instead of silently sending the
-/// dev sentinel `agentos-dev-key` and 401-ing. An explicit `--api-key`/env still
+/// dev sentinel `curie-dev-key` and 401-ing. An explicit `--api-key`/env still
 /// wins (the caller only reaches here when neither was supplied). The value is
 /// never printed — it flows straight into the `X-API-Key` header.
 pub async fn discover_api_key(namespace: &str, release: &str) -> Result<String> {
@@ -2155,7 +2155,7 @@ pub async fn discover_api_key(namespace: &str, release: &str) -> Result<String> 
         .ok_or_else(|| {
             api_key_usage_err(format!(
                 "could not read the API key from secret {release}-secrets in namespace {namespace}; \
-                 pass --api-key or set AGENTOS_API_KEY to the release's api.apiKey"
+                 pass --api-key or set CURIE_API_KEY to the release's api.apiKey"
             ))
         })
 }
@@ -2174,7 +2174,7 @@ fn valkey_password_usage_err(msg: impl Into<String>) -> anyhow::Error {
 /// onto the release's Valkey, whose password `cluster up` randomizes, so without
 /// this the dev sentinel `valkeypass` reaches a strong-secrets install and the
 /// connection fails authentication (#786). An explicit
-/// `--valkey-password`/`AGENTOS_VALKEY_PASSWORD` still wins (the caller only
+/// `--valkey-password`/`CURIE_VALKEY_PASSWORD` still wins (the caller only
 /// reaches here when neither was supplied); the value is never printed.
 pub async fn discover_valkey_password(namespace: &str, release: &str) -> Result<String> {
     read_release_secret(namespace, release, "valkeyPassword")
@@ -2182,7 +2182,7 @@ pub async fn discover_valkey_password(namespace: &str, release: &str) -> Result<
         .ok_or_else(|| {
             valkey_password_usage_err(format!(
                 "could not read the Valkey password from secret {release}-secrets in namespace \
-                 {namespace}; pass --valkey-password or set AGENTOS_VALKEY_PASSWORD to the \
+                 {namespace}; pass --valkey-password or set CURIE_VALKEY_PASSWORD to the \
                  release's valkey.password"
             ))
         })
@@ -2191,7 +2191,7 @@ pub async fn discover_valkey_password(namespace: &str, release: &str) -> Result<
 /// A usage error whose fix hint points at the Slack bot-token escape hatch.
 fn slack_bot_token_usage_err(msg: impl Into<String>) -> anyhow::Error {
     crate::exit::CliError::usage(msg)
-        .with_fix("set AGENTOS_SLACK_BOT_TOKEN, or connect the workspace with `agentos cluster comms --slack`")
+        .with_fix("set CURIE_SLACK_BOT_TOKEN, or connect the workspace with `curie cluster comms --slack`")
         .into()
 }
 
@@ -2210,8 +2210,8 @@ pub async fn discover_slack_bot_token(namespace: &str, release: &str) -> Result<
         .ok_or_else(|| {
             slack_bot_token_usage_err(format!(
                 "could not read a Slack bot token from secret {release}-secrets in namespace \
-                 {namespace}; the workspace may not be connected (run `agentos cluster comms \
-                 --slack`), or set AGENTOS_SLACK_BOT_TOKEN"
+                 {namespace}; the workspace may not be connected (run `curie cluster comms \
+                 --slack`), or set CURIE_SLACK_BOT_TOKEN"
             ))
         })
 }
@@ -2537,7 +2537,7 @@ fn api_base_endpoint(
     host: Option<&str>,
 ) -> crate::observability::Endpoint {
     let row = |url, note| crate::observability::Endpoint {
-        name: "AgentOS API".to_string(),
+        name: "Curie API".to_string(),
         url,
         note,
         browsable: false,
@@ -2645,7 +2645,7 @@ pub async fn cluster_observability_endpoints(
         service_surface(
             opts,
             "ui",
-            "AgentOS Console",
+            "Curie Console",
             ui_svc.as_deref(),
             host.as_deref(),
             true,
@@ -2662,7 +2662,7 @@ pub async fn cluster_observability_endpoints(
     ]
 }
 
-/// The read-only commands `agentos cluster observability` runs (and prints under
+/// The read-only commands `curie cluster observability` runs (and prints under
 /// `--dry-run`).
 ///
 /// A superset of what actually runs, not a 1:1 trace: `resolve_node_host` only
@@ -2702,7 +2702,7 @@ pub async fn observability(
     // The cluster counterpart of the local tier's hint: stderr guidance, not
     // payload, since resolving a service says nothing about whether the release
     // is actually serving.
-    ui.note("start these surfaces with `agentos cluster up` if they are unreachable");
+    ui.note("start these surfaces with `curie cluster up` if they are unreachable");
     Ok(crate::observability::ObservabilityOutput::Surfaces(
         surfaces,
     ))
@@ -2714,8 +2714,8 @@ mod tests {
 
     fn common() -> CommonOpts {
         CommonOpts {
-            namespace: "agentos".into(),
-            release: "agentos".into(),
+            namespace: "curie".into(),
+            release: "curie".into(),
             dry_run: false,
         }
     }
@@ -2726,7 +2726,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: false,
@@ -2741,7 +2741,7 @@ mod tests {
         let line = cmds[0].display();
         assert_eq!(
             line,
-            "helm upgrade --install agentos charts/agentos -n agentos --create-namespace \
+            "helm upgrade --install curie charts/curie -n curie --create-namespace \
              --set ui.service.type=NodePort --set langfuse.web.service.type=NodePort"
         );
     }
@@ -2752,7 +2752,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,
@@ -2774,7 +2774,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,
@@ -2800,7 +2800,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: false,
@@ -2825,7 +2825,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: false,
@@ -2847,7 +2847,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec!["anthropic".into()],
             resolved_egress_cidrs: vec!["192.0.2.10/32".into()],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: false,
@@ -2980,7 +2980,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,
@@ -3002,7 +3002,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,
@@ -3020,12 +3020,12 @@ mod tests {
 
     #[test]
     fn up_defaults_runner_model_from_env() {
-        // AGENTOS_MODEL set, no explicit --set: inject the runner model (#361).
+        // CURIE_MODEL set, no explicit --set: inject the runner model (#361).
         let cmds = up_commands(&UpOpts {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,
@@ -3045,12 +3045,12 @@ mod tests {
 
     #[test]
     fn up_without_env_model_omits_runner_model_set() {
-        // No AGENTOS_MODEL: inject nothing, the chart default stands (#361).
+        // No CURIE_MODEL: inject nothing, the chart default stands (#361).
         let cmds = up_commands(&UpOpts {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,
@@ -3067,13 +3067,13 @@ mod tests {
 
     #[test]
     fn up_explicit_set_model_suppresses_env_injection() {
-        // AGENTOS_MODEL set AND an explicit matching --set: the operator's set
+        // CURIE_MODEL set AND an explicit matching --set: the operator's set
         // already carries it, so no duplicate injection (#361).
         let cmds = up_commands(&UpOpts {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,
@@ -3102,7 +3102,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,
@@ -3138,14 +3138,14 @@ mod tests {
 
     #[test]
     fn check_runner_model_conflict_no_env_is_ok() {
-        // No AGENTOS_MODEL: an explicit operator set stands, no conflict.
+        // No CURIE_MODEL: an explicit operator set stands, no conflict.
         let set = vec!["agentSandbox.runner.model=sonnet".into()];
         assert!(check_runner_model_conflict(None, &set).is_ok());
     }
 
     #[test]
     fn check_runner_model_conflict_no_explicit_set_is_ok() {
-        // AGENTOS_MODEL set, no explicit set: nothing to conflict with.
+        // CURIE_MODEL set, no explicit set: nothing to conflict with.
         assert!(check_runner_model_conflict(Some("glm"), &[]).is_ok());
     }
 
@@ -3175,7 +3175,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec!["anthropic".into()],
             resolved_egress_cidrs: vec!["192.0.2.10/32".into()],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: false,
@@ -3211,7 +3211,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: false,
@@ -3244,7 +3244,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec!["anthropic".into()],
             resolved_egress_cidrs: vec!["192.0.2.10/32".into()],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: false,
@@ -3276,7 +3276,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: false,
@@ -3294,7 +3294,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: false,
@@ -3373,7 +3373,7 @@ mod tests {
 
     // #707 ownership-aware teardown. `down` deletes only the namespaces THIS
     // release created (carrying the release-scoped ownership label `up` stamped),
-    // instead of the old hardcoded `agentos agent-sandbox-system` literal sweep.
+    // instead of the old hardcoded `curie agent-sandbox-system` literal sweep.
     // A pre-existing (unlabeled) namespace is left untouched.
     #[test]
     fn down_deletes_only_release_owned_namespaces_by_label() {
@@ -3384,7 +3384,7 @@ mod tests {
         // Label-selector-scoped delete keyed on THIS release's ownership label.
         assert_eq!(
             sweep,
-            "kubectl delete namespace -l agentos.dev/created-by=prod-release --ignore-not-found"
+            "kubectl delete namespace -l curietech.ai/created-by=prod-release --ignore-not-found"
         );
         // Negative case: the pre-existing shared namespace is no longer an
         // unconditional delete target (that would strand pre-existing state).
@@ -3428,7 +3428,7 @@ mod tests {
         // namespace arg is the namespace; the label VALUE is the release.
         assert_eq!(
             cmds[0].display(),
-            "kubectl label namespace agent-ns agentos.dev/created-by=prod-release --overwrite"
+            "kubectl label namespace agent-ns curietech.ai/created-by=prod-release --overwrite"
         );
     }
 
@@ -3518,11 +3518,14 @@ mod tests {
         let cmd = resume_command(&[TeardownStep::NamespaceSweep], &o);
         assert_eq!(
             cmd,
-            "kubectl delete namespace -l agentos.dev/created-by=prod-release --ignore-not-found"
+            "kubectl delete namespace -l curietech.ai/created-by=prod-release --ignore-not-found"
         );
         // #707 ownership-scope invariant: the sweep stays keyed on THIS release's
         // label and is never widened to an unconditional namespace delete.
-        assert!(cmd.contains("agentos.dev/created-by=prod-release"), "{cmd}");
+        assert!(
+            cmd.contains("curietech.ai/created-by=prod-release"),
+            "{cmd}"
+        );
         assert!(
             !cmd.contains("delete namespace prod-release"),
             "must never be an unscoped delete: {cmd}"
@@ -3555,7 +3558,7 @@ mod tests {
         );
         let helm_cmd = "helm uninstall prod-release -n agent-ns";
         let sweep_cmd =
-            "kubectl delete namespace -l agentos.dev/created-by=prod-release --ignore-not-found";
+            "kubectl delete namespace -l curietech.ai/created-by=prod-release --ignore-not-found";
         assert_eq!(
             cmd,
             format!(
@@ -3586,7 +3589,10 @@ mod tests {
             "the resume line's own exit status must aggregate both captured statuses: {cmd}"
         );
         // The sweep half stays label-scoped even when combined with helm.
-        assert!(cmd.contains("agentos.dev/created-by=prod-release"), "{cmd}");
+        assert!(
+            cmd.contains("curietech.ai/created-by=prod-release"),
+            "{cmd}"
+        );
         assert!(cmd.contains("--ignore-not-found"), "{cmd}");
     }
 
@@ -3793,14 +3799,14 @@ mod tests {
         // P1: the resume command is IN the human Display message, not only the fix.
         let shown = err.to_string();
         assert!(
-            shown.contains("agentos.dev/created-by=prod-release"),
+            shown.contains("curietech.ai/created-by=prod-release"),
             "the human message must carry the label-scoped resume command: {shown}"
         );
 
         // --json path: the fix carries the same label-scoped resume command.
         let fix = fix.expect("a fail-forward teardown carries a resume command");
         assert!(
-            fix.contains("agentos.dev/created-by=prod-release"),
+            fix.contains("curietech.ai/created-by=prod-release"),
             "fix must carry the label-scoped resume command: {fix}"
         );
     }
@@ -3839,7 +3845,7 @@ mod tests {
     }
 
     // #768 core anti-regression: a zero-match sweep is NOT the same as an
-    // actual removal. When AgentOS was installed into a pre-existing namespace
+    // actual removal. When Curie was installed into a pre-existing namespace
     // (#707 never labels it), the label-scoped sweep exits 0 with nothing
     // matched. Before #768 this was mapped to the same `SweepOutcome::Removed`
     // as a real deletion, so a failed helm uninstall paired with a zero-match
@@ -3932,7 +3938,7 @@ mod tests {
         // Fail-forward still surfaces the resume command in message and fix.
         let shown = err.to_string();
         assert!(
-            shown.contains("agentos.dev/created-by=prod-release"),
+            shown.contains("curietech.ai/created-by=prod-release"),
             "even a permanent failure surfaces the label-scoped resume command: {shown}"
         );
         // Codex P2: the permanent-failure message must surface the underlying
@@ -3943,7 +3949,10 @@ mod tests {
             "the permanent-failure message must surface the underlying stderr reason: {shown}"
         );
         let fix = fix.expect("a fail-forward teardown carries a resume command");
-        assert!(fix.contains("agentos.dev/created-by=prod-release"), "{fix}");
+        assert!(
+            fix.contains("curietech.ai/created-by=prod-release"),
+            "{fix}"
+        );
     }
 
     // Codex P2: in a MIXED failure the surfaced reason must be the failure that
@@ -3993,12 +4002,12 @@ mod tests {
     fn status_lists_the_readonly_commands() {
         let cmds = status_commands(&common());
         let lines: Vec<String> = cmds.iter().map(OpsCommand::display).collect();
-        assert_eq!(lines[0], "helm status agentos -n agentos");
-        assert_eq!(lines[1], "kubectl get pods -n agentos -o json");
-        assert_eq!(lines[2], "kubectl get svc agentos-ui -n agentos -o json");
+        assert_eq!(lines[0], "helm status curie -n curie");
+        assert_eq!(lines[1], "kubectl get pods -n curie -o json");
+        assert_eq!(lines[2], "kubectl get svc curie-ui -n curie -o json");
         assert_eq!(
             lines[3],
-            "kubectl get svc agentos-langfuse-web -n agentos -o json"
+            "kubectl get svc curie-langfuse-web -n curie -o json"
         );
         assert!(
             lines[4].starts_with("kubectl config view --minify -o "),
@@ -4268,7 +4277,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![
                 ("api.apiKey".into(), "generated-api-key".into()),
                 (
@@ -4322,7 +4331,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: true,
             no_expose: true,
@@ -4346,7 +4355,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: true,
             no_expose: true,
@@ -4372,7 +4381,7 @@ mod tests {
             common: common(),
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,
@@ -4393,7 +4402,7 @@ mod tests {
     #[test]
     fn helm_get_values_reads_user_supplied_values_as_json() {
         let cmd = helm_get_values_cmd(&common());
-        assert_eq!(cmd.display(), "helm get values agentos -n agentos -o json");
+        assert_eq!(cmd.display(), "helm get values curie -n curie -o json");
     }
 
     #[test]
@@ -4546,13 +4555,13 @@ mod tests {
         // The exact hint `cluster status` prints today for a ClusterIP service
         // (PR#34 visual-parity guard): two spaces before `then`.
         assert_eq!(
-            port_forward_hint("agentos", "agentos-ui", 80, 80, "/?api=1"),
-            "kubectl -n agentos port-forward svc/agentos-ui 80:80  then http://localhost:80/?api=1"
+            port_forward_hint("curie", "curie-ui", 80, 80, "/?api=1"),
+            "kubectl -n curie port-forward svc/curie-ui 80:80  then http://localhost:80/?api=1"
         );
         // The 0-port fallback surfaces local 8080 while still forwarding to 0.
         assert_eq!(
-            port_forward_hint("agentos", "agentos-langfuse-web", 8080, 0, ""),
-            "kubectl -n agentos port-forward svc/agentos-langfuse-web 8080:0  then http://localhost:8080"
+            port_forward_hint("curie", "curie-langfuse-web", 8080, 0, ""),
+            "kubectl -n curie port-forward svc/curie-langfuse-web 8080:0  then http://localhost:8080"
         );
     }
 
@@ -4561,7 +4570,7 @@ mod tests {
         // A NodePort ui service resolves to the UI /api proxy URL (#360) and is
         // NEVER browsable -- it is an agent target, not a webapp.
         let ep = api_base_endpoint(&common(), Some(NODEPORT_SVC), Some("10.0.0.5"));
-        assert_eq!(ep.name, "AgentOS API");
+        assert_eq!(ep.name, "Curie API");
         assert_eq!(ep.url.as_deref(), Some("http://10.0.0.5:31234/api"));
         assert_eq!(ep.note, None);
         assert!(!ep.browsable);
@@ -4572,7 +4581,7 @@ mod tests {
         // Unreadable ui service: degrade to a note endpoint rather than failing
         // the whole command, and never smuggle the message into `url`.
         let ep = api_base_endpoint(&common(), Some(""), Some("10.0.0.5"));
-        assert_eq!(ep.name, "AgentOS API");
+        assert_eq!(ep.name, "Curie API");
         assert_eq!(ep.url, None, "a degraded endpoint must not carry a url");
         assert!(
             ep.note.is_some(),
@@ -4599,7 +4608,7 @@ mod tests {
         // `service_surface`.
         let ep = api_base_endpoint(&common(), None, Some("10.0.0.5"));
         assert_eq!(ep.url, None);
-        assert_eq!(ep.note.as_deref(), Some("service agentos-ui not found"));
+        assert_eq!(ep.note.as_deref(), Some("service curie-ui not found"));
         assert!(!ep.browsable);
         assert_no_api_url_hint(&ep);
     }
@@ -4613,7 +4622,9 @@ mod tests {
         assert_eq!(ep.url, None);
         assert_eq!(
             ep.note.as_deref(),
-            Some("kubectl -n agentos port-forward svc/agentos-api 8000:8000  then http://localhost:8000")
+            Some(
+                "kubectl -n curie port-forward svc/curie-api 8000:8000  then http://localhost:8000"
+            )
         );
         assert!(!ep.browsable);
         assert_no_api_url_hint(&ep);
@@ -4643,7 +4654,9 @@ mod tests {
         assert_eq!(ep.url, None);
         assert_eq!(
             ep.note.as_deref(),
-            Some("kubectl -n agentos port-forward svc/agentos-api 8000:8000  then http://localhost:8000")
+            Some(
+                "kubectl -n curie port-forward svc/curie-api 8000:8000  then http://localhost:8000"
+            )
         );
         assert!(!ep.browsable);
         assert_no_api_url_hint(&ep);
@@ -4657,12 +4670,12 @@ mod tests {
         let ep = service_surface(
             &common(),
             "ui",
-            "AgentOS Console",
+            "Curie Console",
             Some(NODEPORT_SVC),
             Some("10.0.0.5"),
             true,
         );
-        assert_eq!(ep.name, "AgentOS Console");
+        assert_eq!(ep.name, "Curie Console");
         assert_eq!(ep.url.as_deref(), Some("http://10.0.0.5:31234/?api=1"));
         assert_eq!(ep.note, None);
         assert!(ep.browsable, "a resolved NodePort URL is the --open target");
@@ -4673,13 +4686,13 @@ mod tests {
         let ep = service_surface(
             &common(),
             "ui",
-            "AgentOS Console",
+            "Curie Console",
             None,
             Some("10.0.0.5"),
             true,
         );
         assert_eq!(ep.url, None, "a degraded row must never carry a url");
-        assert_eq!(ep.note.as_deref(), Some("service agentos-ui not found"));
+        assert_eq!(ep.note.as_deref(), Some("service curie-ui not found"));
         assert!(!ep.browsable, "--open must not fire on a degraded row");
     }
 
@@ -4691,7 +4704,7 @@ mod tests {
         let ep = service_surface(
             &common(),
             "ui",
-            "AgentOS Console",
+            "Curie Console",
             Some(NODEPORT_SVC),
             None,
             true,
@@ -4699,7 +4712,7 @@ mod tests {
         assert_eq!(ep.url, None, "must not fabricate a localhost URL");
         assert_eq!(
             ep.note.as_deref(),
-            Some("could not determine a node host to reach service agentos-ui")
+            Some("could not determine a node host to reach service curie-ui")
         );
         assert!(!ep.browsable);
     }
@@ -4710,7 +4723,7 @@ mod tests {
         let ep = service_surface(
             &common(),
             "ui",
-            "AgentOS Console",
+            "Curie Console",
             Some(unassigned),
             Some("10.0.0.5"),
             true,
@@ -4718,7 +4731,7 @@ mod tests {
         assert_eq!(ep.url, None);
         assert_eq!(
             ep.note.as_deref(),
-            Some("service agentos-ui is NodePort but exposes no nodePort yet")
+            Some("service curie-ui is NodePort but exposes no nodePort yet")
         );
         assert!(!ep.browsable);
     }
@@ -4737,7 +4750,7 @@ mod tests {
         let note = ep.note.as_deref().expect("a port-forward hint");
         assert_eq!(
             note,
-            "kubectl -n agentos port-forward svc/agentos-langfuse-web 3000:3000  then http://localhost:3000"
+            "kubectl -n curie port-forward svc/curie-langfuse-web 3000:3000  then http://localhost:3000"
         );
         // Serialized into the --json payload, which is machine-consumed.
         assert!(
@@ -4752,16 +4765,13 @@ mod tests {
         let ep = service_surface(
             &common(),
             "ui",
-            "AgentOS Console",
+            "Curie Console",
             Some("{not json"),
             Some("10.0.0.5"),
             true,
         );
         assert_eq!(ep.url, None);
-        assert_eq!(
-            ep.note.as_deref(),
-            Some("could not read service agentos-ui")
-        );
+        assert_eq!(ep.note.as_deref(), Some("could not read service curie-ui"));
         assert!(!ep.browsable);
     }
 
@@ -4773,13 +4783,13 @@ mod tests {
             .collect();
         assert_eq!(lines.len(), 4, "{lines:?}");
         assert!(
-            lines.iter().any(|l| l.contains("get svc agentos-ui")),
+            lines.iter().any(|l| l.contains("get svc curie-ui")),
             "{lines:?}"
         );
         assert!(
             lines
                 .iter()
-                .any(|l| l.contains("get svc agentos-langfuse-web")),
+                .any(|l| l.contains("get svc curie-langfuse-web")),
             "{lines:?}"
         );
     }
@@ -5183,7 +5193,7 @@ mod tests {
             model: None,
             allow_egress_host: vec!["anthropic".into()],
             resolved_egress_cidrs: vec!["10.0.0.1/32".into(), "2001:db8::1/128".into()],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,
@@ -5231,7 +5241,7 @@ mod tests {
             model: None,
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,
@@ -5262,7 +5272,7 @@ mod tests {
             model: None,
             allow_egress_host: vec![],
             resolved_egress_cidrs: vec![],
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             secrets: vec![],
             dev: false,
             no_expose: true,

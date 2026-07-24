@@ -1,19 +1,19 @@
-//! `agentos init`: scaffold a Claude Code plugin bundle.
+//! `curie init`: scaffold a Claude Code plugin bundle.
 //!
 //! Seven files. The deployed bundle shape matches the frozen `plugin-format`
 //! package: a manifest at `.claude-plugin/plugin.json`, a genericized starter
 //! `skills/<name>/SKILL.md` with YAML frontmatter, a root `.mcp.json`, plus a
 //! CLI-local `evals/cases.json` seed (a suite object
 //! `{name, cases: [{id, input, grader}]}`, hand-mirroring the frozen eval-case
-//! schema) for `agentos skill eval` -- a single smoke case whose grader is
+//! schema) for `curie skill eval` -- a single smoke case whose grader is
 //! falsifiable: it requires the agent to name itself, so an empty, broken, or
 //! off-topic turn fails it (#527). Under `--fake-model` that grader never runs
 //! at all -- the fake tier is a plumbing fixture and reports the non-graded
 //! `plumbing_ok` (ADR-0055). Two more files teach the developer's coding agent how to
 //! drive the harness: a root `AGENTS.md` (the cross-agent auto-scanned standard)
-//! and an installable primer skill at `.claude/skills/using-agentos/SKILL.md`
+//! and an installable primer skill at `.claude/skills/using-curie/SKILL.md`
 //! whose body is rendered from `guide::primer_markdown()` so it can never drift
-//! from `agentos guide`. Names are kebab-case per the validator.
+//! from `curie guide`. Names are kebab-case per the validator.
 
 use std::path::{Path, PathBuf};
 
@@ -74,7 +74,7 @@ fn manifest(name: &str) -> String {
 /// a real skill uses.
 fn skill_md(name: &str) -> String {
     format!(
-        "---\nname: {name}\ndescription: Starter skill for the {name} agent. Replace this description with when the agent should invoke this skill -- it is the routing signal.\nallowed-tools:\n  - WebSearch\n  - WebFetch\n---\n\n# {name}\n\nThis is the starter skill scaffolded by `agentos init`. Replace each section\nbelow with your agent's real behavior; keep the section shape.\n\n## When to run\nDescribe the requests this skill should handle.\n\n## How to answer\n1. Numbered, concrete steps the agent follows.\n2. Prefer verifiable sources and tools over recall.\n\n## Hard rules\n- Never invent an answer. If you cannot find one, say so and name what you tried.\n- Keep replies short enough to read in Slack without expanding.\n"
+        "---\nname: {name}\ndescription: Starter skill for the {name} agent. Replace this description with when the agent should invoke this skill -- it is the routing signal.\nallowed-tools:\n  - WebSearch\n  - WebFetch\n---\n\n# {name}\n\nThis is the starter skill scaffolded by `curie init`. Replace each section\nbelow with your agent's real behavior; keep the section shape.\n\n## When to run\nDescribe the requests this skill should handle.\n\n## How to answer\n1. Numbered, concrete steps the agent follows.\n2. Prefer verifiable sources and tools over recall.\n\n## Hard rules\n- Never invent an answer. If you cannot find one, say so and name what you tried.\n- Keep replies short enough to read in Slack without expanding.\n"
     )
 }
 
@@ -115,27 +115,27 @@ fn eval_cases(name: &str) -> String {
 
 /// The root `AGENTS.md`: the cross-agent auto-scanned standard carrying the
 /// non-discoverable operating rules (the authoring loop, eval-as-promotion-gate,
-/// verify-first) and a pointer to `agentos guide` for the full primer and the
+/// verify-first) and a pointer to `curie guide` for the full primer and the
 /// current landmine list.
 fn agents_md(name: &str) -> String {
     format!(
-        "# Agent instructions: {name}\n\nThis is an AgentOS bundle (a Claude Code plugin shape). The full harness\nprimer is one command away and is the source of truth:\n\n    agentos guide\n\n## The loop\n\n1. `agentos skill up --fake-model` -- boot the runner offline, no credential.\n   The fake model is plumbing, not a subject under test: it answers every input\n   with the same canned reply, so nothing it says is evidence about behavior.\n2. Edit `skills/{name}/SKILL.md` (behavior) and `evals/cases.json` (the contract).\n3. `agentos skill eval` under `--fake-model` reports `plumbing_ok` -- it proves\n   the turn completed, and grades nothing. Re-run it with a real credential to\n   grade the cases; that green is the promotion gate. Merging to main promotes.\n4. `agentos skill down` when finished.\n\n## Rules\n\n- Verify before running: `agentos schema` lists every real command; never\n  invoke one you have not confirmed.\n- The eval file is the promotion gate and never changes across tiers\n  (skill/local/cluster). Grading, and therefore green and red, is a\n  real-credential concept; never deploy on red.\n- Landmines: run `agentos guide` (or read\n  `.claude/skills/using-agentos/SKILL.md`) for the full, current list.\n- The scaffolded eval is a starter smoke test: it only checks the agent named\n  itself, so it fails on an empty/errored turn but proves nothing about the\n  real work. Replace it with a FALSIFIABLE grader -- one a plausibly-broken\n  agent would fail -- as the first authoring step (ADR-0022).\n- A bare greeting (\"hey\", \"hi\") is answered by the real model by default --\n  a full sandbox claim and model turn for something a canned reply could\n  handle for free. If this agent gets greeted often, consider a `greeting`\n  behavior pack: `GET`/`PUT /agents/{{id}}/behavior-packs` (no CLI verb yet)\n  short-circuits a bare greeting/help request before the model ever runs.\n  See `docs/behavior-packs.md`.\n"
+        "# Agent instructions: {name}\n\nThis is a Curie bundle (a Claude Code plugin shape). The full harness\nprimer is one command away and is the source of truth:\n\n    curie guide\n\n## The loop\n\n1. `curie skill up --fake-model` -- boot the runner offline, no credential.\n   The fake model is plumbing, not a subject under test: it answers every input\n   with the same canned reply, so nothing it says is evidence about behavior.\n2. Edit `skills/{name}/SKILL.md` (behavior) and `evals/cases.json` (the contract).\n3. `curie skill eval` under `--fake-model` reports `plumbing_ok` -- it proves\n   the turn completed, and grades nothing. Re-run it with a real credential to\n   grade the cases; that green is the promotion gate. Merging to main promotes.\n4. `curie skill down` when finished.\n\n## Rules\n\n- Verify before running: `curie schema` lists every real command; never\n  invoke one you have not confirmed.\n- The eval file is the promotion gate and never changes across tiers\n  (skill/local/cluster). Grading, and therefore green and red, is a\n  real-credential concept; never deploy on red.\n- Landmines: run `curie guide` (or read\n  `.claude/skills/using-curie/SKILL.md`) for the full, current list.\n- The scaffolded eval is a starter smoke test: it only checks the agent named\n  itself, so it fails on an empty/errored turn but proves nothing about the\n  real work. Replace it with a FALSIFIABLE grader -- one a plausibly-broken\n  agent would fail -- as the first authoring step (ADR-0022).\n- A bare greeting (\"hey\", \"hi\") is answered by the real model by default --\n  a full sandbox claim and model turn for something a canned reply could\n  handle for free. If this agent gets greeted often, consider a `greeting`\n  behavior pack: `GET`/`PUT /agents/{{id}}/behavior-packs` (no CLI verb yet)\n  short-circuits a bare greeting/help request before the model ever runs.\n  See `docs/behavior-packs.md`.\n"
     )
 }
 
-/// The installable harness primer skill at `.claude/skills/using-agentos/`,
+/// The installable harness primer skill at `.claude/skills/using-curie/`,
 /// auto-discovered by Claude Code as a PROJECT skill. Frontmatter (guidance-only,
 /// so no `allowed-tools`) followed by the guide body VERBATIM from
 /// `crate::guide::primer_markdown()` -- one source of truth, drift-gated.
-fn using_agentos_skill() -> String {
+fn using_curie_skill() -> String {
     format!(
-        "---\nname: using-agentos\ndescription: How to drive the AgentOS harness -- the parity ladder, tier decision logic, landmines, and recovery steps. Invoke when running agentos commands, authoring or evaluating a bundle, or debugging a divergence between skill, local, and cluster tiers.\n---\n\n{}",
+        "---\nname: using-curie\ndescription: How to drive the Curie harness -- the parity ladder, tier decision logic, landmines, and recovery steps. Invoke when running curie commands, authoring or evaluating a bundle, or debugging a divergence between skill, local, and cluster tiers.\n---\n\n{}",
         crate::guide::primer_markdown()
     )
 }
 
 const MCP_JSON: &str = "{\n  \"mcpServers\": {}\n}\n";
-const GITIGNORE: &str = ".agentos/\n";
+const GITIGNORE: &str = ".curie/\n";
 
 /// Create the bundle skeleton under `dir`; returns the created files.
 pub fn scaffold(dir: &Path, name: &str) -> Result<Vec<PathBuf>> {
@@ -151,8 +151,8 @@ pub fn scaffold(dir: &Path, name: &str) -> Result<Vec<PathBuf>> {
         (dir.join(".gitignore"), GITIGNORE.to_string()),
         (dir.join("AGENTS.md"), agents_md(name)),
         (
-            dir.join(".claude/skills/using-agentos/SKILL.md"),
-            using_agentos_skill(),
+            dir.join(".claude/skills/using-curie/SKILL.md"),
+            using_curie_skill(),
         ),
     ];
 
@@ -341,15 +341,15 @@ pub(crate) fn no_manifest_message(dir: &Path) -> String {
     if looks_like_pre_plugin_bundle(dir) {
         format!(
             "no plugin manifest under {d} -- this looks like a pre-plugin \
-             (agent-ss-template) bundle. Run `agentos init --adopt {d}` to scaffold \
+             (agent-ss-template) bundle. Run `curie init --adopt {d}` to scaffold \
              the plugin skeleton alongside your code, then port its logic into \
              skills/ and .mcp.json (see docs/adopting-a-bundle.md)."
         )
     } else {
         format!(
             "no plugin manifest under {d}: expected .claude-plugin/plugin.json or \
-             plugin.json. Run `agentos init <name>` to scaffold a new bundle, or \
-             `agentos init --adopt {d}` to adopt an existing directory."
+             plugin.json. Run `curie init <name>` to scaffold a new bundle, or \
+             `curie init --adopt {d}` to adopt an existing directory."
         )
     }
 }
@@ -497,9 +497,9 @@ mod tests {
 
         // AGENTS.md teaches the developer's coding agent the harness.
         let agents = std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
-        assert!(agents.contains("agentos guide"));
-        assert!(agents.contains("agentos skill eval"));
-        // AGENTS.md defers the landmine list to `agentos guide` rather than
+        assert!(agents.contains("curie guide"));
+        assert!(agents.contains("curie skill eval"));
+        // AGENTS.md defers the landmine list to `curie guide` rather than
         // naming any specific landmine: no drift gate covers this hand-written
         // prose, so a copy here goes stale silently. The `allowed-tools`
         // teaching lives in the correct-by-example scaffolded SKILL.md above.
@@ -507,9 +507,9 @@ mod tests {
 
         // The installable harness primer skill, discovered by Claude Code.
         let harness_skill =
-            std::fs::read_to_string(dir.path().join(".claude/skills/using-agentos/SKILL.md"))
+            std::fs::read_to_string(dir.path().join(".claude/skills/using-curie/SKILL.md"))
                 .unwrap();
-        assert!(harness_skill.starts_with("---\nname: using-agentos\n"));
+        assert!(harness_skill.starts_with("---\nname: using-curie\n"));
         let harness_description = harness_skill
             .lines()
             .find(|l| l.starts_with("description:"))
@@ -521,8 +521,8 @@ mod tests {
                 .is_empty(),
             "harness skill description is non-empty"
         );
-        assert!(harness_skill.contains("# AgentOS harness primer"));
-        assert!(harness_skill.contains("agentos schema"));
+        assert!(harness_skill.contains("# Curie harness primer"));
+        assert!(harness_skill.contains("curie schema"));
 
         assert_eq!(
             read_manifest(dir.path()).unwrap(),
@@ -539,7 +539,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         scaffold(dir.path(), "deal-desk").unwrap();
         let content =
-            std::fs::read_to_string(dir.path().join(".claude/skills/using-agentos/SKILL.md"))
+            std::fs::read_to_string(dir.path().join(".claude/skills/using-curie/SKILL.md"))
                 .unwrap();
         let body = content
             .splitn(3, "---\n")

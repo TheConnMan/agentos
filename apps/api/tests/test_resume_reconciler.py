@@ -29,20 +29,20 @@ import pytest
 import redis
 import redis.asyncio as aioredis
 from aci_protocol import QueuedTurn
-from agentos_api.config import get_settings
-from agentos_api.models import Approval, ApprovalStatus
-from agentos_api.resumequeue import ResumeQueue
-from agentos_api.resumereconciler import ResumeReconciler
-from agentos_test_support.valkey import (
+from curie_api.config import get_settings
+from curie_api.models import Approval, ApprovalStatus
+from curie_api.resumequeue import ResumeQueue
+from curie_api.resumereconciler import ResumeReconciler
+from curie_test_support.valkey import (
     VALKEY_HOST as _VALKEY_HOST,
 )
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     VALKEY_PORT as _VALKEY_PORT,
 )
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     VALKEY_PW as _VALKEY_PW,
 )
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     connect_or_skip,
 )
 from sqlalchemy import select, update
@@ -56,9 +56,9 @@ from sqlalchemy.ext.asyncio import (
 @pytest.fixture
 def runs_stream() -> Iterator[str]:
     """A per-test runs stream so reconciler enqueues never feed the shared
-    compose worker's real ``agentos:runs`` consumer group."""
+    compose worker's real ``curie:runs`` consumer group."""
 
-    name = f"test:agentos:runs:{uuid.uuid4().hex}"
+    name = f"test:curie:runs:{uuid.uuid4().hex}"
     os.environ["RUNS_STREAM"] = name
     get_settings.cache_clear()
     yield name
@@ -295,8 +295,8 @@ def test_resume_turn_selector_domain_matches_resumable_statuses() -> None:
     Pure unit: no DB, no Valkey -- the selector is a function of the record.
     """
 
-    from agentos_api import crud
-    from agentos_api.resumequeue import resume_turn_for
+    from curie_api import crud
+    from curie_api.resumequeue import resume_turn_for
 
     approved = resume_turn_for(_detached_approval(ApprovalStatus.approved))
     assert "[approval resolved]" in approved.text
@@ -706,7 +706,7 @@ def _seed_graveyard_row(
     would: the QueuedTurn's ``event_id`` is ``resume_event_id(approval_id)`` (so the
     backstop parses it back to this approval), plus the ``dl_*`` metadata columns."""
 
-    from agentos_api.resumequeue import build_resume_turn
+    from curie_api.resumequeue import build_resume_turn
 
     approval = _detached_approval(status, resolved_by=resolved_by)
     approval.id = approval_id
@@ -997,7 +997,7 @@ def test_parse_resume_event_id_inverts_resume_event_id() -> None:
     the None cases fence the malformed shapes the scan must skip.
     """
 
-    from agentos_api.resumequeue import parse_resume_event_id, resume_event_id
+    from curie_api.resumequeue import parse_resume_event_id, resume_event_id
 
     approval_id = uuid.uuid4()
     assert parse_resume_event_id(resume_event_id(approval_id)) == approval_id

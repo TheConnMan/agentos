@@ -3,11 +3,11 @@
 Date: 2026-07-13
 Status: Accepted
 
-Implements [#362](https://github.com/curie-eng/agentos/issues/362).
+Implements [#362](https://github.com/curie-eng/curie/issues/362).
 
 ## Context
 
-`agentos cluster up` used to open the runner's fail-closed egress to the model
+`curie cluster up` used to open the runner's fail-closed egress to the model
 provider automatically whenever a model credential was present. It did this by
 pushing a single hardcoded Anthropic CIDR (`160.79.104.0/23`) as an egress
 carve-out at index `[0]` of the NetworkPolicy's `allowedEgress` array, plus a

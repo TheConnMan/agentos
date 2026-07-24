@@ -28,12 +28,12 @@ def test_root_md_line_citation_fails(clean_repo: Path, run_lint: RunLint) -> Non
     write(
         clean_repo,
         "ARCHITECTURE.md",
-        "The gate lives at `runner/src/agentos_runner/approval.py:12`.\n",
+        "The gate lives at `runner/src/curie_runner/approval.py:12`.\n",
     )
     code, out = run_lint(clean_repo)
     assert code != 0
     assert "ARCHITECTURE.md" in out
-    assert "runner/src/agentos_runner/approval.py:12" in out
+    assert "runner/src/curie_runner/approval.py:12" in out
 
 
 def test_root_md_missing_path_fails(clean_repo: Path, run_lint: RunLint) -> None:
@@ -42,11 +42,11 @@ def test_root_md_missing_path_fails(clean_repo: Path, run_lint: RunLint) -> None
     write(
         clean_repo,
         "ARCHITECTURE.md",
-        "Bundles are stored by `apps/api/src/agentos_api/ghost.py`.\n",
+        "Bundles are stored by `apps/api/src/curie_api/ghost.py`.\n",
     )
     code, out = run_lint(clean_repo)
     assert code != 0
-    assert "apps/api/src/agentos_api/ghost.py" in out
+    assert "apps/api/src/curie_api/ghost.py" in out
     assert "does not exist" in out.lower()
 
 
@@ -57,7 +57,7 @@ def test_root_md_unresolvable_symbol_fails(clean_repo: Path, run_lint: RunLint) 
     write(
         clean_repo,
         "ARCHITECTURE.md",
-        "Approval runs through `runner/src/agentos_runner/approval.py::no_such_fn`.\n",
+        "Approval runs through `runner/src/curie_runner/approval.py::no_such_fn`.\n",
     )
     code, out = run_lint(clean_repo)
     assert code != 0
@@ -72,8 +72,8 @@ def test_root_md_symbol_anchor_passes(clean_repo: Path, run_lint: RunLint) -> No
     write(
         clean_repo,
         "ARCHITECTURE.md",
-        "The gate is `runner/src/agentos_runner/approval.py::authorize_approval`,\n"
-        "built on `runner/src/agentos_runner/approval.py::ApprovalGate`.\n",
+        "The gate is `runner/src/curie_runner/approval.py::authorize_approval`,\n"
+        "built on `runner/src/curie_runner/approval.py::ApprovalGate`.\n",
     )
     code, out = run_lint(clean_repo)
     assert code == 0, out
@@ -86,7 +86,7 @@ def test_nested_dir_md_not_linted(clean_repo: Path, run_lint: RunLint) -> None:
     write(
         clean_repo,
         "some_other_dir/notes.md",
-        "Scratch notes citing `apps/api/src/agentos_api/ghost.py:99`.\n",
+        "Scratch notes citing `apps/api/src/curie_api/ghost.py:99`.\n",
     )
     code, out = run_lint(clean_repo)
     assert code == 0, out

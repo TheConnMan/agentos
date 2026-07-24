@@ -1,4 +1,4 @@
-"""AgentOS runner — prototype (PT-E seed).
+"""Curie runner — prototype (PT-E seed).
 
 Minimal claude-agent-sdk streaming server proven inside a Kubernetes Agent Sandbox
 on 2026-07-04: it answered POST /run via the sandbox serviceFQDN, carried the prompt
@@ -6,7 +6,7 @@ cache across requests in one live session (call-2 cache_read == call-1 cache_cre
 and exported nested agent.run -> llm.generation gen_ai spans to Langfuse.
 
 This is a de-risking prototype, NOT production code. The real ACI runner adds the full
-session protocol (steer/interrupt/NDJSON streaming), AGENTOS_BUDGET enforcement, and the
+session protocol (steer/interrupt/NDJSON streaming), CURIE_BUDGET enforcement, and the
 side_effect_flag (see docs/reference/detailed-architecture.md section 0).
 
 Env: CLAUDE_CODE_OAUTH_TOKEN (or a real API key in prod), OTEL_EXPORTER_OTLP_ENDPOINT
@@ -25,10 +25,10 @@ from opentelemetry.trace import SpanKind
 LF = os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]
 auth = os.environ["LF_BASIC"]  # base64 pk:sk
 exp = OTLPSpanExporter(endpoint=LF + "/v1/traces", headers={"Authorization": f"Basic {auth}"})
-prov = TracerProvider(resource=Resource.create({"service.name": "agentos-runner-sandbox"}))
+prov = TracerProvider(resource=Resource.create({"service.name": "curie-runner-sandbox"}))
 prov.add_span_processor(SimpleSpanProcessor(exp))
 trace.set_tracer_provider(prov)
-tr = trace.get_tracer("agentos")
+tr = trace.get_tracer("curie")
 
 client = None
 
@@ -49,7 +49,7 @@ async def run(request):
     text = body.get("text", "hello")
     c = await get_client()
     with tr.start_as_current_span("agent.run", kind=SpanKind.SERVER) as root:
-        root.set_attribute("langfuse.trace.name", "agentos-sandbox-run")
+        root.set_attribute("langfuse.trace.name", "curie-sandbox-run")
         out, usage = [], {}
         with tr.start_as_current_span("llm.generation") as gen:
             gen.set_attribute("model", "claude-agent-sandbox")

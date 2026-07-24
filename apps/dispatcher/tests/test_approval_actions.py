@@ -13,14 +13,14 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import redis
-from agentos_dispatcher.app import build_app
-from agentos_dispatcher.approval_actions import (
+from curie_dispatcher.app import build_app
+from curie_dispatcher.approval_actions import (
     APPROVE_ACTION_ID,
     REJECT_ACTION_ID,
     ApprovalResolveClient,
     ResolveOutcome,
 )
-from agentos_dispatcher.config import DispatcherConfig
+from curie_dispatcher.config import DispatcherConfig
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_sdk.socket_mode.request import SocketModeRequest
@@ -41,8 +41,8 @@ _CARD_MESSAGE = {
 }
 
 # Real API reason strings, copied verbatim (not imported -- the dispatcher
-# does not depend on apps/api). Sources: apps/api/src/agentos_api/authorizer.py
-# (_SELF_APPROVAL_REASON) and apps/api/src/agentos_api/slack_approvers.py (the
+# does not depend on apps/api). Sources: apps/api/src/curie_api/authorizer.py
+# (_SELF_APPROVAL_REASON) and apps/api/src/curie_api/slack_approvers.py (the
 # channel non-membership reason and the group-lookup could-not-verify reason).
 # The API side pins its own half of this contract in
 # apps/api/tests/test_approvers_port.py and apps/api/tests/test_approvals.py.

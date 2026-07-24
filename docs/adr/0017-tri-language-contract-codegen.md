@@ -44,7 +44,7 @@ job ([`.github/workflows/ci.yaml`](../../.github/workflows/ci.yaml)).
   core before anything ships.
 - **Generate the Rust types from the JSON Schema with `typify`** instead of the
   current hand-rolled emitter. Not chosen yet; it is an open refactor
-  ([#81](https://github.com/curie-eng/agentos/issues/81)) that would change the
+  ([#81](https://github.com/curie-eng/curie/issues/81)) that would change the
   emitter, not this decision (Pydantic stays the source of truth, the gate stays).
 
 ## Consequences

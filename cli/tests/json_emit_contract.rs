@@ -16,15 +16,15 @@ use std::process::Command;
 
 // The eval-concurrency forward-surface (#706): `EvalOpts` gains a
 // `pub concurrency: usize` field, and `eval_dry_run_lines` must emit one plan
-// line naming the sequential run. Importing directly from the `agentos` lib
+// line naming the sequential run. Importing directly from the `curie` lib
 // (rather than only driving the built binary) pins the field on the struct
 // itself: until the implementer adds `concurrency`, this whole test target
 // fails to compile (the intended RED), isolated to this file -- the lib
 // itself still compiles.
-use agentos::message::{eval_dry_run_lines, EvalOpts};
+use curie::message::{eval_dry_run_lines, EvalOpts};
 
 fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_agentos")
+    env!("CARGO_BIN_EXE_curie")
 }
 
 fn manifest() -> serde_json::Value {
@@ -129,7 +129,7 @@ fn every_dry_run_verb_emits_json_object() {
         argv.push("--dry-run".to_string());
         argv.push("--json".to_string());
 
-        // cargo runs integration tests with cwd = `cli/`, where `charts/agentos`
+        // cargo runs integration tests with cwd = `cli/`, where `charts/curie`
         // and the compose file don't resolve -- so the cluster/local operator
         // verbs (`up`/`down`/`status`) would error on chart resolution and never
         // reach their real dry-run branch, satisfying "non-empty JSON" via the
@@ -141,25 +141,25 @@ fn every_dry_run_verb_emits_json_object() {
             .current_dir(root)
             .args(&argv)
             .output()
-            .unwrap_or_else(|e| panic!("run agentos {}: {e}", argv.join(" ")));
+            .unwrap_or_else(|e| panic!("run curie {}: {e}", argv.join(" ")));
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         assert!(
             !stdout.trim().is_empty(),
-            "`agentos {}` under --json must not emit empty stdout\nstderr: {}",
+            "`curie {}` under --json must not emit empty stdout\nstderr: {}",
             argv.join(" "),
             String::from_utf8_lossy(&output.stderr)
         );
         let parsed: serde_json::Value =
             serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
                 panic!(
-                    "`agentos {}` under --json must emit parseable JSON: {e}\nstdout: {stdout}",
+                    "`curie {}` under --json must emit parseable JSON: {e}\nstdout: {stdout}",
                     argv.join(" ")
                 )
             });
         assert!(
             parsed.is_object(),
-            "`agentos {}` under --json must emit a JSON object, got: {stdout}",
+            "`curie {}` under --json must emit a JSON object, got: {stdout}",
             argv.join(" ")
         );
     }
@@ -178,19 +178,19 @@ fn observability_emits_json_object() {
     let output = Command::new(bin())
         .args(["local", "observability", "--json"])
         .output()
-        .expect("run agentos local observability --json");
+        .expect("run curie local observability --json");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
         !stdout.trim().is_empty(),
-        "`agentos local observability --json` must not emit empty stdout\nstderr: {}",
+        "`curie local observability --json` must not emit empty stdout\nstderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|e| panic!("must emit parseable JSON: {e}\nstdout: {stdout}"));
     assert!(
         parsed.is_object(),
-        "`agentos local observability --json` must emit a JSON object, got: {stdout}"
+        "`curie local observability --json` must emit a JSON object, got: {stdout}"
     );
     assert_eq!(
         output.status.code(),
@@ -208,28 +208,28 @@ fn dry_run_json_masks_credentials() {
     // prints as `sk-ant-S***` and the raw sentinel never appears. The --json
     // output must preserve exactly that masking. RED now = empty stdout.
     //
-    // `--chart` is required: a dev build with no `charts/agentos` in the test
+    // `--chart` is required: a dev build with no `charts/curie` in the test
     // binary's cwd (the `cli/` package dir) errors before building the plan, so
     // point it at the committed chart at the worktree root (one level up from
     // CARGO_MANIFEST_DIR). `--dry-run` never fetches or stats it.
-    let chart = concat!(env!("CARGO_MANIFEST_DIR"), "/../charts/agentos");
+    let chart = concat!(env!("CARGO_MANIFEST_DIR"), "/../charts/curie");
     let output = Command::new(bin())
         .args(["cluster", "up", "--chart", chart, "--dry-run", "--json"])
-        .env("AGENTOS_MODEL_CREDENTIALS", "sk-ant-SECRETSENTINEL9999")
+        .env("CURIE_MODEL_CREDENTIALS", "sk-ant-SECRETSENTINEL9999")
         .output()
-        .expect("run agentos cluster up --dry-run --json");
+        .expect("run curie cluster up --dry-run --json");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
         !stdout.trim().is_empty(),
-        "`agentos cluster up --dry-run --json` must not emit empty stdout\nstderr: {}",
+        "`curie cluster up --dry-run --json` must not emit empty stdout\nstderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|e| panic!("must emit parseable JSON: {e}\nstdout: {stdout}"));
     assert!(
         parsed.is_object(),
-        "`agentos cluster up --dry-run --json` must emit a JSON object, got: {stdout}"
+        "`curie cluster up --dry-run --json` must emit a JSON object, got: {stdout}"
     );
     assert!(
         stdout.contains("sk-ant-S***"),
@@ -264,24 +264,24 @@ fn assert_eval_dry_run_plan(tier: &str) {
         ])
         .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
         .output()
-        .unwrap_or_else(|e| panic!("run agentos {tier} eval --dry-run --json: {e}"));
+        .unwrap_or_else(|e| panic!("run curie {tier} eval --dry-run --json: {e}"));
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert_eq!(
         output.status.code(),
         Some(0),
-        "`agentos {tier} eval --dry-run --json` is hermetic and must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+        "`curie {tier} eval --dry-run --json` is hermetic and must exit 0\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
         !stdout.trim().is_empty(),
-        "`agentos {tier} eval --dry-run --json` must not emit empty stdout\nstderr: {stderr}"
+        "`curie {tier} eval --dry-run --json` must not emit empty stdout\nstderr: {stderr}"
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|e| panic!("must emit parseable JSON: {e}\nstdout: {stdout}"));
     assert!(
         parsed.is_object(),
-        "`agentos {tier} eval --dry-run --json` must emit a JSON object, got: {stdout}"
+        "`curie {tier} eval --dry-run --json` must emit a JSON object, got: {stdout}"
     );
     assert!(
         parsed.get("error").is_none(),
@@ -328,23 +328,23 @@ fn cluster_eval_dry_run_emits_plan_not_error() {
 /// rather than an inline quoted field assignment, which is the shape the
 /// commit-time secret scanner's field-name-plus-literal heuristic matches on.
 const TEST_VALKEY_PASSWORD: &str = "valkeypass";
-const TEST_API_KEY: &str = "agentos-dev-key";
+const TEST_API_KEY: &str = "curie-dev-key";
 
 #[test]
 fn eval_dry_run_plan_names_sequential_concurrency() {
     let opts = EvalOpts {
         cases: None,
         channel: None,
-        namespace: "agentos".into(),
-        release: "agentos".into(),
+        namespace: "curie".into(),
+        release: "curie".into(),
         listen_host: None,
         listen_port: 8155,
         valkey_local_port: 56381,
         valkey_password: TEST_VALKEY_PASSWORD.into(),
         api_local_port: 8123,
         api_key: TEST_API_KEY.into(),
-        user: "U-agentos-message".into(),
-        stream: "agentos:runs".into(),
+        user: "U-curie-message".into(),
+        stream: "curie:runs".into(),
         timeout_secs: 300,
         dry_run: true,
         local: true,
@@ -394,24 +394,24 @@ fn assert_comms_dry_run_plan(tier: &str, extra: &[&str]) -> serde_json::Value {
         .env_remove("SLACK_BOT_TOKEN")
         .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
         .output()
-        .unwrap_or_else(|e| panic!("run agentos {args:?}: {e}"));
+        .unwrap_or_else(|e| panic!("run curie {args:?}: {e}"));
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert_eq!(
         output.status.code(),
         Some(0),
-        "`agentos {args:?}` is hermetic and must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+        "`curie {args:?}` is hermetic and must exit 0\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
         !stdout.trim().is_empty(),
-        "`agentos {args:?}` must not emit empty stdout\nstderr: {stderr}"
+        "`curie {args:?}` must not emit empty stdout\nstderr: {stderr}"
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|e| panic!("must emit parseable JSON: {e}\nstdout: {stdout}"));
     assert!(
         parsed.is_object(),
-        "`agentos {args:?}` must emit a JSON object, got: {stdout}"
+        "`curie {args:?}` must emit a JSON object, got: {stdout}"
     );
     assert!(
         parsed.get("error").is_none(),
@@ -471,7 +471,7 @@ fn local_comms_dry_run_emits_plan_not_error() {
     assert_tokens_masked(&stdout);
     let first = parsed["plan"][0].as_str().unwrap_or_default();
     assert!(
-        first.contains("docker compose") && first.contains("agentos-dispatcher"),
+        first.contains("docker compose") && first.contains("curie-dispatcher"),
         "the local plan must be the compose connect command that brings up the dispatcher: {first:?}"
     );
 }
@@ -507,7 +507,7 @@ fn local_comms_disconnect_dry_run_emits_plan_not_error() {
         plan.iter().any(|l| l
             .as_str()
             .unwrap_or_default()
-            .contains("stop agentos-dispatcher")),
+            .contains("stop curie-dispatcher")),
         "the local disconnect plan must stop the dispatcher: {parsed}"
     );
 }
@@ -532,15 +532,15 @@ fn cluster_comms_disconnect_dry_run_emits_plan_not_error() {
 // compare against an EXACT literal, so renaming, dropping, OR adding a key fails.
 // This is the only coverage of the agent-facing key contract.
 
-use agentos::api::{MemoryEntry, Version};
-use agentos::commands::{
+use curie::api::{MemoryEntry, Version};
+use curie::commands::{
     ApprovalsOutput, BudgetOutput, DeleteOutput, InitOutput, KillOutput, MemoryOutput,
     ResetThreadOutput, ResumeOutput, VersionsOutput,
 };
 // `ObservabilityOutput` moved to the tier-aware `observability` seam (#460) so
 // both the local and cluster handlers return one type.
-use agentos::observability::{Endpoint, ObservabilityOutput};
-use agentos::ui::{CliOutput, DryRunPlan};
+use curie::observability::{Endpoint, ObservabilityOutput};
+use curie::ui::{CliOutput, DryRunPlan};
 use serde_json::json;
 
 fn plan(lines: &[&str]) -> DryRunPlan {
@@ -552,10 +552,10 @@ fn plan(lines: &[&str]) -> DryRunPlan {
 #[test]
 fn dry_run_plan_json_shape_is_pinned() {
     assert_eq!(
-        plan(&["helm upgrade --install agentos", "kubectl rollout status"]).to_json(),
+        plan(&["helm upgrade --install curie", "kubectl rollout status"]).to_json(),
         json!({
             "dry_run": true,
-            "plan": ["helm upgrade --install agentos", "kubectl rollout status"],
+            "plan": ["helm upgrade --install curie", "kubectl rollout status"],
         })
     );
     // An empty plan still emits the `plan` key as an array, never null/absent.
@@ -735,7 +735,7 @@ fn approvals_output_json_shape_is_pinned() {
 
 #[test]
 fn approvals_pending_and_resolved_json_shapes_are_pinned() {
-    use agentos::api::ApprovalRecord;
+    use curie::api::ApprovalRecord;
     let record = || ApprovalRecord {
         id: "ap_1".to_string(),
         author: "U1".to_string(),
@@ -798,7 +798,7 @@ fn observability_output_json_shape_is_pinned() {
         ObservabilityOutput::Surfaces(vec![
             // Browsable row: url set, note explicitly null.
             Endpoint {
-                name: "AgentOS Console".to_string(),
+                name: "Curie Console".to_string(),
                 url: Some("http://localhost:28080/?api=1".to_string()),
                 note: None,
                 browsable: true,
@@ -812,7 +812,7 @@ fn observability_output_json_shape_is_pinned() {
             // Non-browsable row WITH a url: the API base is an agent target,
             // never opened in a browser.
             Endpoint {
-                name: "AgentOS API".to_string(),
+                name: "Curie API".to_string(),
                 url: Some("http://localhost:28000".to_string()),
                 note: None,
                 browsable: false,
@@ -822,17 +822,17 @@ fn observability_output_json_shape_is_pinned() {
             Endpoint {
                 name: "Langfuse UI".to_string(),
                 url: None,
-                note: Some("service agentos-langfuse-web not found".to_string()),
+                note: Some("service curie-langfuse-web not found".to_string()),
                 browsable: false,
             },
         ])
         .to_json(),
         json!({
             "surfaces": [
-                {"name": "AgentOS Console", "url": "http://localhost:28080/?api=1", "note": null, "browsable": true},
+                {"name": "Curie Console", "url": "http://localhost:28080/?api=1", "note": null, "browsable": true},
                 {"name": "Langfuse UI", "url": "http://localhost:23000", "note": null, "browsable": true},
-                {"name": "AgentOS API", "url": "http://localhost:28000", "note": null, "browsable": false},
-                {"name": "Langfuse UI", "url": null, "note": "service agentos-langfuse-web not found", "browsable": false},
+                {"name": "Curie API", "url": "http://localhost:28000", "note": null, "browsable": false},
+                {"name": "Langfuse UI", "url": null, "note": "service curie-langfuse-web not found", "browsable": false},
             ],
         })
     );
@@ -849,7 +849,7 @@ fn cluster_observability_output_json_shape_is_pinned() {
     assert_eq!(
         ObservabilityOutput::Surfaces(vec![
             Endpoint {
-                name: "AgentOS Console".to_string(),
+                name: "Curie Console".to_string(),
                 url: Some("http://10.0.0.5:31234/?api=1".to_string()),
                 note: None,
                 browsable: true,
@@ -859,14 +859,14 @@ fn cluster_observability_output_json_shape_is_pinned() {
                 name: "Langfuse UI".to_string(),
                 url: None,
                 note: Some(
-                    "kubectl -n agentos port-forward svc/agentos-langfuse-web 3000:3000  \
+                    "kubectl -n curie port-forward svc/curie-langfuse-web 3000:3000  \
                      then http://localhost:3000"
                         .to_string()
                 ),
                 browsable: false,
             },
             Endpoint {
-                name: "AgentOS API".to_string(),
+                name: "Curie API".to_string(),
                 url: Some("http://10.0.0.5:31234/api".to_string()),
                 note: None,
                 browsable: false,
@@ -875,9 +875,9 @@ fn cluster_observability_output_json_shape_is_pinned() {
         .to_json(),
         json!({
             "surfaces": [
-                {"name": "AgentOS Console", "url": "http://10.0.0.5:31234/?api=1", "note": null, "browsable": true},
-                {"name": "Langfuse UI", "url": null, "note": "kubectl -n agentos port-forward svc/agentos-langfuse-web 3000:3000  then http://localhost:3000", "browsable": false},
-                {"name": "AgentOS API", "url": "http://10.0.0.5:31234/api", "note": null, "browsable": false},
+                {"name": "Curie Console", "url": "http://10.0.0.5:31234/?api=1", "note": null, "browsable": true},
+                {"name": "Langfuse UI", "url": null, "note": "kubectl -n curie port-forward svc/curie-langfuse-web 3000:3000  then http://localhost:3000", "browsable": false},
+                {"name": "Curie API", "url": "http://10.0.0.5:31234/api", "note": null, "browsable": false},
             ],
         })
     );
@@ -1001,7 +1001,7 @@ fn delete_output_json_shape_is_pinned() {
 
 #[test]
 fn deploy_output_json_shape_is_pinned() {
-    use agentos::commands::DeployOutput;
+    use curie::commands::DeployOutput;
     assert_eq!(
         DeployOutput {
             plugin_name: "weather".to_string(),
@@ -1035,7 +1035,7 @@ fn deploy_output_json_shape_is_pinned() {
 
 #[test]
 fn comms_output_json_shape_is_pinned() {
-    use agentos::comms::CommsOutput;
+    use curie::comms::CommsOutput;
     assert_eq!(
         CommsOutput::DryRun(plan(&["helm upgrade"])).to_json(),
         json!({"dry_run": true, "plan": ["helm upgrade"]})
@@ -1053,14 +1053,14 @@ fn comms_output_json_shape_is_pinned() {
 
 #[test]
 fn cluster_up_down_output_json_shapes_are_pinned() {
-    use agentos::ops::{ClusterDownOutput, ClusterUpOutput};
+    use curie::ops::{ClusterDownOutput, ClusterUpOutput};
     assert_eq!(
         ClusterUpOutput::Up {
-            namespace: "agentos".to_string(),
-            release: "agentos".to_string(),
+            namespace: "curie".to_string(),
+            release: "curie".to_string(),
         }
         .to_json(),
-        json!({"status": "up", "namespace": "agentos", "release": "agentos"})
+        json!({"status": "up", "namespace": "curie", "release": "curie"})
     );
     assert_eq!(
         ClusterDownOutput::Aborted.to_json(),
@@ -1083,17 +1083,17 @@ fn cluster_up_down_output_json_shapes_are_pinned() {
 // label-scoped resume command in `{error, fix}` -- which the implementer's error
 // path must produce. The error is constructed exactly as the implementer will:
 // `CliError::transient(msg).with_fix(<resume command>)` wrapped into
-// `anyhow::Error`, then classified via the public `agentos::exit` API. Asserting
+// `anyhow::Error`, then classified via the public `curie::exit` API. Asserting
 // on `classify`/`error_json` (rather than a real `down()` return, which needs a
 // live unreachable cluster) pins the same user-visible contract without I/O.
 #[test]
 fn cluster_down_failforward_error_is_transient_with_resume_fix() {
-    use agentos::exit::{classify, error_json, CliError, ExitClass};
+    use curie::exit::{classify, error_json, CliError, ExitClass};
 
     // The resume command an incomplete teardown surfaces: only the outstanding
     // steps, label-scoped per #707 (the ownership-scope invariant).
     let resume =
-        "kubectl delete namespace -l agentos.dev/created-by=prod-release --ignore-not-found";
+        "kubectl delete namespace -l curietech.ai/created-by=prod-release --ignore-not-found";
     let err: anyhow::Error =
         CliError::transient("cluster teardown could not complete; the API server was unreachable")
             .with_fix(resume)
@@ -1108,7 +1108,7 @@ fn cluster_down_failforward_error_is_transient_with_resume_fix() {
     // The fix carries the exact resume command, and it stays label-scoped.
     let fix = fix.expect("a fail-forward teardown error carries a resume command in fix");
     assert!(
-        fix.contains("agentos.dev/created-by="),
+        fix.contains("curietech.ai/created-by="),
         "fix must carry the label-scoped resume command: {fix}"
     );
 
@@ -1120,7 +1120,7 @@ fn cluster_down_failforward_error_is_transient_with_resume_fix() {
         json["fix"]
             .as_str()
             .unwrap()
-            .contains("agentos.dev/created-by="),
+            .contains("curietech.ai/created-by="),
         "fix names the label-scoped resume command: {}",
         json["fix"]
     );
@@ -1128,7 +1128,7 @@ fn cluster_down_failforward_error_is_transient_with_resume_fix() {
 
 #[test]
 fn local_operator_output_json_shapes_are_pinned() {
-    use agentos::local::{LocalDownOutput, LocalStatusOutput, LocalUpOutput};
+    use curie::local::{LocalDownOutput, LocalStatusOutput, LocalUpOutput};
     assert_eq!(
         LocalUpOutput::Up {
             endpoints: vec![("Console".to_string(), "http://localhost:28080".to_string())],
@@ -1185,7 +1185,7 @@ const INIT_SPEC_JSON: &str = r#"{
   ]
 }"#;
 
-/// Binary-driven: `agentos init --from-spec <spec> --json` on the real success
+/// Binary-driven: `curie init --from-spec <spec> --json` on the real success
 /// path must emit ONE JSON object to stdout, not the 0-byte stdout it shipped
 /// with (issue #485). Asserting exit 0 alone is a FALSE GREEN here -- the bug
 /// was exit 0 WITH empty stdout -- so this asserts on the stdout BYTES. Hermetic:
@@ -1207,7 +1207,7 @@ fn init_from_spec_emits_json_object() {
             "--json",
         ])
         .output()
-        .expect("run agentos init --from-spec --json");
+        .expect("run curie init --from-spec --json");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(
@@ -1218,14 +1218,14 @@ fn init_from_spec_emits_json_object() {
     );
     assert!(
         !stdout.trim().is_empty(),
-        "`agentos init --from-spec --json` must not emit empty stdout (issue #485)\nstderr: {}",
+        "`curie init --from-spec --json` must not emit empty stdout (issue #485)\nstderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|e| panic!("must emit parseable JSON: {e}\nstdout: {stdout}"));
     assert!(
         parsed.is_object(),
-        "`agentos init --from-spec --json` must emit a JSON object, got: {stdout}"
+        "`curie init --from-spec --json` must emit a JSON object, got: {stdout}"
     );
     // Agent-facing keys: the name comes from the spec, from_spec is the source
     // path (never null on this branch), created lists the written files.
@@ -1269,7 +1269,7 @@ fn init_output_json_shape_is_pinned() {
             "dir": "deal-desk",
             "from_spec": "spec.json",
             "created": ["deal-desk/.claude-plugin/plugin.json"],
-            "next": "cd deal-desk && agentos skill up"
+            "next": "cd deal-desk && curie skill up"
         })
     );
     assert_eq!(
@@ -1287,7 +1287,7 @@ fn init_output_json_shape_is_pinned() {
             "dir": "./weather",
             "from_spec": null,
             "created": [],
-            "next": "cd ./weather && agentos skill up"
+            "next": "cd ./weather && curie skill up"
         })
     );
 }
@@ -1308,7 +1308,7 @@ fn init_output_next_shell_quotes_a_dir_with_a_space() {
     .to_json();
     assert_eq!(
         out["next"],
-        json!("cd 'my bundle' && agentos skill up"),
+        json!("cd 'my bundle' && curie skill up"),
         "a dir with a space must be shell-quoted in the next command: {out}"
     );
 }

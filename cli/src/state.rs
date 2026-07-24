@@ -1,9 +1,9 @@
 //! Local runner state and message turn context.
 //!
-//! Written to `.agentos/runner.json` in the project directory so `message`,
+//! Written to `.curie/runner.json` in the project directory so `message`,
 //! `eval`, `cluster status`, and `cluster down` find the runner without flags. The file is
 //! local workstation state, never committed (init scaffolds the ignore rule).
-//! Message verbs also write `.agentos/last-turn.json` with the last successful
+//! Message verbs also write `.curie/last-turn.json` with the last successful
 //! turn's non-secret continuation context.
 
 use std::path::{Path, PathBuf};
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-pub const STATE_DIR: &str = ".agentos";
+pub const STATE_DIR: &str = ".curie";
 pub const STATE_FILE: &str = "runner.json";
 pub const TURN_FILE: &str = "last-turn.json";
 
@@ -110,7 +110,7 @@ impl TurnContext {
             api_url: opts.api_url.clone(),
             api_key_env: env_api_key
                 .filter(|value| value == &opts.api_key)
-                .map(|_| "AGENTOS_API_KEY".to_string()),
+                .map(|_| "CURIE_API_KEY".to_string()),
         }
     }
 }
@@ -198,11 +198,11 @@ pub fn apply_continue(
         namespace: cli
             .namespace
             .or_else(|| state.as_ref().map(|state| state.namespace.clone()))
-            .unwrap_or_else(|| "agentos".to_string()),
+            .unwrap_or_else(|| "curie".to_string()),
         release: cli
             .release
             .or_else(|| state.as_ref().map(|state| state.release.clone()))
-            .unwrap_or_else(|| "agentos".to_string()),
+            .unwrap_or_else(|| "curie".to_string()),
         chart: cli
             .chart
             .or_else(|| state.as_ref().map(|state| state.chart.clone())),
@@ -235,8 +235,8 @@ mod tests {
     fn sample() -> RunnerState {
         RunnerState {
             container_id: "abc123".into(),
-            container_name: "agentos-runner-local".into(),
-            image: "agentos-runner".into(),
+            container_name: "curie-runner-local".into(),
+            image: "curie-runner".into(),
             port: 7245,
             base_url: "http://localhost:7245".into(),
             session_id: "local-1".into(),
@@ -270,8 +270,8 @@ mod tests {
     fn round_trip_preserves_local_model_runner_fields() {
         let dir = tempfile::tempdir().unwrap();
         let state = RunnerState {
-            ollama_container: Some("agentos-ollama".into()),
-            network: Some("agentos_default".into()),
+            ollama_container: Some("curie-ollama".into()),
+            network: Some("curie_default".into()),
             model_base_url: Some("http://ollama:11434".into()),
             ..sample()
         };
@@ -287,8 +287,8 @@ mod tests {
             dir.path().join(STATE_DIR).join(STATE_FILE),
             r#"{
   "container_id": "abc123",
-  "container_name": "agentos-runner-local",
-  "image": "agentos-runner",
+  "container_name": "curie-runner-local",
+  "image": "curie-runner",
   "port": 7245,
   "base_url": "http://localhost:7245",
   "session_id": "local-1",
@@ -325,7 +325,7 @@ mod tests {
             release: "persisted-release".into(),
             chart: "charts/persisted".into(),
             listen_host: Some("127.0.0.1".into()),
-            api_key_env: Some("AGENTOS_API_KEY".into()),
+            api_key_env: Some("CURIE_API_KEY".into()),
             timeout_secs: 777,
             api_url: Some("http://persisted-api".into()),
         }
@@ -338,11 +338,11 @@ mod tests {
             verb: TurnVerb::Cluster,
             channel: "C1".into(),
             thread_ts: "9.9".into(),
-            namespace: "agentos-turns".into(),
-            release: "agentos-turns".into(),
-            chart: "charts/agentos-turns".into(),
+            namespace: "curie-turns".into(),
+            release: "curie-turns".into(),
+            chart: "charts/curie-turns".into(),
             listen_host: Some("127.0.0.1".into()),
-            api_key_env: Some("AGENTOS_API_KEY".into()),
+            api_key_env: Some("CURIE_API_KEY".into()),
             timeout_secs: 321,
             api_url: Some("http://turn-api".into()),
         };
@@ -369,9 +369,9 @@ mod tests {
             text: "hi".into(),
             channel: None,
             thread: None,
-            namespace: "agentos".into(),
-            release: "agentos".into(),
-            chart: "charts/agentos".into(),
+            namespace: "curie".into(),
+            release: "curie".into(),
+            chart: "charts/curie".into(),
             listen_host: None,
             listen_port: 8155,
             valkey_local_port: 56381,
@@ -398,7 +398,7 @@ mod tests {
         let raw = std::fs::read_to_string(dir.path().join(STATE_DIR).join(TURN_FILE)).unwrap();
         assert!(!raw.contains("sk-super-secret"));
         assert!(!raw.contains("vk-secret"));
-        assert!(raw.contains("AGENTOS_API_KEY"));
+        assert!(raw.contains("CURIE_API_KEY"));
     }
 
     #[test]
@@ -407,9 +407,9 @@ mod tests {
             text: "hi".into(),
             channel: None,
             thread: None,
-            namespace: "agentos".into(),
-            release: "agentos".into(),
-            chart: "charts/agentos".into(),
+            namespace: "curie".into(),
+            release: "curie".into(),
+            chart: "charts/curie".into(),
             listen_host: None,
             listen_port: 8155,
             valkey_local_port: 56381,
@@ -431,7 +431,7 @@ mod tests {
             "9.9",
             Some("sk-super-secret".into()),
         );
-        assert_eq!(from_equal.api_key_env.as_deref(), Some("AGENTOS_API_KEY"));
+        assert_eq!(from_equal.api_key_env.as_deref(), Some("CURIE_API_KEY"));
 
         let from_different = TurnContext::from_turn(
             &opts,
@@ -539,8 +539,8 @@ mod tests {
 
         assert_eq!(resolved.channel, None);
         assert_eq!(resolved.thread, None);
-        assert_eq!(resolved.namespace, "agentos");
-        assert_eq!(resolved.release, "agentos");
+        assert_eq!(resolved.namespace, "curie");
+        assert_eq!(resolved.release, "curie");
         assert_eq!(resolved.chart, None);
         assert_eq!(resolved.timeout_secs, DEFAULT_TIMEOUT_SECS);
     }
@@ -576,16 +576,16 @@ mod tests {
 
     #[test]
     fn api_key_env_recorded_and_still_set_is_reread_without_error() {
-        // Turn 1 recorded api_key_env = Some("AGENTOS_API_KEY"); on continue the env is still
+        // Turn 1 recorded api_key_env = Some("CURIE_API_KEY"); on continue the env is still
         // set, so clap re-reads it into cli.api_key (!= default) and apply_continue must succeed
         // using that live value, never erroring and never touching the stored source name.
         let mut cli = default_cli_turn_args();
-        cli.api_key = "sk-live-from-env".into(); // what clap's `env = AGENTOS_API_KEY` re-read
+        cli.api_key = "sk-live-from-env".into(); // what clap's `env = CURIE_API_KEY` re-read
 
         let resolved = apply_continue(
             TurnVerb::Cluster,
             cli,
-            Some(persisted_turn(TurnVerb::Cluster)), // api_key_env = Some("AGENTOS_API_KEY")
+            Some(persisted_turn(TurnVerb::Cluster)), // api_key_env = Some("CURIE_API_KEY")
             Some("sk-live-from-env".into()),         // env still set
         )
         .unwrap();

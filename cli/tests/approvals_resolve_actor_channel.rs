@@ -24,7 +24,7 @@
 
 mod support;
 
-use agentos::commands::{approvals, AgentActionOpts, ApprovalCmd, ApprovalsOutput};
+use curie::commands::{approvals, AgentActionOpts, ApprovalCmd, ApprovalsOutput};
 use support::{serve, MockServer, Response};
 
 const TEST_API_KEY: &str = "test-key";

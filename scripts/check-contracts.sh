@@ -22,7 +22,7 @@ echo "== regenerating JSON Schemas =="
 uv run python -m aci_protocol.schema_export
 uv run python -m channel_protocol.schema_export
 uv run python -m plugin_format.schema_export
-uv run python -m agentos_worker.eval.schema_export
+uv run python -m curie_worker.eval.schema_export
 
 echo "== regenerating the boot-env block in .env.example =="
 uv run python -m aci_protocol.env_example_export

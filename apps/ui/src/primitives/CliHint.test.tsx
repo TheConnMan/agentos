@@ -40,20 +40,20 @@ afterEach(() => {
 
 describe("CliHint", () => {
   it("renders the resting >_ glyph", () => {
-    renderHint({ command: "agentos skill up" });
+    renderHint({ command: "curie skill up" });
     expect(screen.getByRole("button")).toHaveTextContent(">_");
   });
 
   it("previews the exact command in a tooltip and aria-label", () => {
-    renderHint({ command: "agentos skill up" });
+    renderHint({ command: "curie skill up" });
     const btn = screen.getByRole("button");
-    expect(btn).toHaveAttribute("title", "$ agentos skill up");
-    expect(btn).toHaveAccessibleName("Copy command: agentos skill up");
+    expect(btn).toHaveAttribute("title", "$ curie skill up");
+    expect(btn).toHaveAccessibleName("Copy command: curie skill up");
   });
 
   it("morphs to the copy glyph on hover and back on leave", async () => {
     const user = userEvent.setup();
-    renderHint({ command: "agentos skill up" });
+    renderHint({ command: "curie skill up" });
     const btn = screen.getByRole("button");
     await user.hover(btn);
     expect(btn).toHaveTextContent("⧉");
@@ -63,7 +63,7 @@ describe("CliHint", () => {
 
   it("morphs on keyboard focus and back on blur", async () => {
     const user = userEvent.setup();
-    renderHint({ command: "agentos skill up" });
+    renderHint({ command: "curie skill up" });
     const btn = screen.getByRole("button");
     await user.tab();
     expect(btn).toHaveFocus();
@@ -75,10 +75,10 @@ describe("CliHint", () => {
   it("copies on click: writes the command, toasts, and flips to ✓", async () => {
     const user = userEvent.setup();
     setClipboard({ writeText }); // after setup(), which installs its own stub
-    renderHint({ command: "agentos skill up" });
+    renderHint({ command: "curie skill up" });
     const btn = screen.getByRole("button");
     await user.click(btn);
-    expect(writeText).toHaveBeenCalledWith("agentos skill up");
+    expect(writeText).toHaveBeenCalledWith("curie skill up");
     expect(screen.getByTestId("toast")).toHaveTextContent("Copied");
     expect(btn).toHaveAttribute("data-copied", "true");
     expect(btn).toHaveTextContent("✓");
@@ -91,22 +91,22 @@ describe("CliHint", () => {
   it("copies via keyboard (Enter) for accessibility", async () => {
     const user = userEvent.setup();
     setClipboard({ writeText }); // after setup(), which installs its own stub
-    renderHint({ command: "agentos skill up" });
+    renderHint({ command: "curie skill up" });
     const btn = screen.getByRole("button");
     btn.focus();
     await user.keyboard("{Enter}");
-    expect(writeText).toHaveBeenCalledWith("agentos skill up");
+    expect(writeText).toHaveBeenCalledWith("curie skill up");
   });
 
   it("renders an optional label", () => {
-    renderHint({ command: "agentos skill up", label: "Run it" });
+    renderHint({ command: "curie skill up", label: "Run it" });
     expect(screen.getByRole("button")).toHaveTextContent("Run it");
   });
 
   it("still toasts when the clipboard API is unavailable", async () => {
     const user = userEvent.setup();
     setClipboard(undefined); // after setup(), which installs its own stub
-    renderHint({ command: "agentos skill up" });
+    renderHint({ command: "curie skill up" });
     await user.click(screen.getByRole("button"));
     expect(writeText).not.toHaveBeenCalled();
     expect(screen.getByTestId("toast")).toHaveTextContent("Copied");

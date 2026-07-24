@@ -2,7 +2,7 @@
 
 Local middle mode (Docker substrate) defaults to a real model; fake model is an
 explicit opt-in. A Docker worker with neither a model credential nor
-AGENTOS_FAKE_MODEL must fail loudly instead of silently degrading to a fake.
+CURIE_FAKE_MODEL must fail loudly instead of silently degrading to a fake.
 """
 
 from __future__ import annotations
@@ -12,9 +12,9 @@ import logging
 from typing import Any
 
 import pytest
-from agentos_worker.config import WorkerConfig
-from agentos_worker.run import _sandbox_client, _substrate_config, _supervise, main
-from agentos_worker.sandbox import DockerSandboxClient, SubstrateConfig
+from curie_worker.config import WorkerConfig
+from curie_worker.run import _sandbox_client, _substrate_config, _supervise, main
+from curie_worker.sandbox import DockerSandboxClient, SubstrateConfig
 
 _SUB = SubstrateConfig(namespace="default", warm_pool="pool")
 
@@ -30,7 +30,7 @@ def test_substrate_config_claim_timeout_defaults_to_90s() -> None:
 
 
 def test_substrate_config_claim_timeout_reads_env() -> None:
-    cfg = _substrate_config({"AGENTOS_CLAIM_TIMEOUT_SECONDS": "45"})
+    cfg = _substrate_config({"CURIE_CLAIM_TIMEOUT_SECONDS": "45"})
     assert cfg.claim_timeout_seconds == 45.0
 
 
@@ -51,10 +51,10 @@ def test_valkey_socket_timeout_exceeds_the_block_interval() -> None:
 
 def test_docker_without_credential_or_fake_fails_loudly() -> None:
     with pytest.raises(SystemExit) as exc:
-        _sandbox_client(WorkerConfig(), {"AGENTOS_SANDBOX_SUBSTRATE": "docker"}, _SUB)
+        _sandbox_client(WorkerConfig(), {"CURIE_SANDBOX_SUBSTRATE": "docker"}, _SUB)
     msg = str(exc.value)
     assert "CLAUDE_CODE_OAUTH_TOKEN" in msg  # tells the user how to fix it
-    assert "AGENTOS_FAKE_MODEL" in msg
+    assert "CURIE_FAKE_MODEL" in msg
 
 
 def test_docker_with_sdk_credential_builds_docker_client(monkeypatch) -> None:
@@ -65,21 +65,21 @@ def test_docker_with_sdk_credential_builds_docker_client(monkeypatch) -> None:
     )
     client = _sandbox_client(
         WorkerConfig(),
-        {"AGENTOS_SANDBOX_SUBSTRATE": "docker", "CLAUDE_CODE_OAUTH_TOKEN": _FAKE_SDK_CRED},
+        {"CURIE_SANDBOX_SUBSTRATE": "docker", "CLAUDE_CODE_OAUTH_TOKEN": _FAKE_SDK_CRED},
         _SUB,
     )
     assert isinstance(client, DockerSandboxClient)
 
 
-def test_docker_with_agentos_credentials_reference_builds_docker_client(monkeypatch) -> None:
-    # AGENTOS_CREDENTIALS alone is a valid credential: forwarded by name and
+def test_docker_with_curie_credentials_reference_builds_docker_client(monkeypatch) -> None:
+    # CURIE_CREDENTIALS alone is a valid credential: forwarded by name and
     # mapped onto an SDK var by the runner, so the gate must accept it.
     monkeypatch.setattr(
         DockerSandboxClient, "ensure_image", lambda self: None, raising=False
     )
     client = _sandbox_client(
         WorkerConfig(credentials="sk-ant-PLACEHOLDER"),
-        {"AGENTOS_SANDBOX_SUBSTRATE": "docker"},
+        {"CURIE_SANDBOX_SUBSTRATE": "docker"},
         _SUB,
     )
     assert isinstance(client, DockerSandboxClient)
@@ -91,7 +91,7 @@ def test_docker_with_model_base_url_builds_docker_client_without_credential(monk
     )
     client = _sandbox_client(
         WorkerConfig(model_base_url="http://ollama:11434"),
-        {"AGENTOS_SANDBOX_SUBSTRATE": "docker"},
+        {"CURIE_SANDBOX_SUBSTRATE": "docker"},
         _SUB,
     )
     assert isinstance(client, DockerSandboxClient)
@@ -102,7 +102,7 @@ def test_docker_with_explicit_fake_model_builds_docker_client(monkeypatch) -> No
         DockerSandboxClient, "ensure_image", lambda self: None, raising=False
     )
     client = _sandbox_client(
-        WorkerConfig(fake_model=True), {"AGENTOS_SANDBOX_SUBSTRATE": "docker"}, _SUB
+        WorkerConfig(fake_model=True), {"CURIE_SANDBOX_SUBSTRATE": "docker"}, _SUB
     )
     assert isinstance(client, DockerSandboxClient)
 
@@ -110,24 +110,24 @@ def test_docker_with_explicit_fake_model_builds_docker_client(monkeypatch) -> No
 def test_docker_without_otlp_endpoint_warns(caplog) -> None:
     # Docker substrate exports runner traces via OTLP; without an endpoint the
     # traces silently go nowhere, so the boot must warn (not fail).
-    with caplog.at_level(logging.WARNING, logger="agentos_worker.run"):
+    with caplog.at_level(logging.WARNING, logger="curie_worker.run"):
         client = _sandbox_client(
-            WorkerConfig(fake_model=True), {"AGENTOS_SANDBOX_SUBSTRATE": "docker"}, _SUB
+            WorkerConfig(fake_model=True), {"CURIE_SANDBOX_SUBSTRATE": "docker"}, _SUB
         )
     assert isinstance(client, DockerSandboxClient)
     warnings = [
         r for r in caplog.records
-        if r.name == "agentos_worker.run" and "OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage()
+        if r.name == "curie_worker.run" and "OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage()
     ]
     assert warnings and all(r.levelno == logging.WARNING for r in warnings)
 
 
 def test_docker_with_otlp_endpoint_does_not_warn(caplog) -> None:
-    with caplog.at_level(logging.WARNING, logger="agentos_worker.run"):
+    with caplog.at_level(logging.WARNING, logger="curie_worker.run"):
         client = _sandbox_client(
             WorkerConfig(fake_model=True),
             {
-                "AGENTOS_SANDBOX_SUBSTRATE": "docker",
+                "CURIE_SANDBOX_SUBSTRATE": "docker",
                 "OTEL_EXPORTER_OTLP_ENDPOINT": "http://otel-collector:4318",
             },
             _SUB,
@@ -135,7 +135,7 @@ def test_docker_with_otlp_endpoint_does_not_warn(caplog) -> None:
     assert isinstance(client, DockerSandboxClient)
     assert not [
         r for r in caplog.records
-        if r.name == "agentos_worker.run" and "OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage()
+        if r.name == "curie_worker.run" and "OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage()
     ]
 
 
@@ -151,7 +151,7 @@ def test_sandbox_client_docker_prepulls_image(monkeypatch) -> None:
     )
     _sandbox_client(
         WorkerConfig(),
-        {"AGENTOS_SANDBOX_SUBSTRATE": "docker", "CLAUDE_CODE_OAUTH_TOKEN": _FAKE_SDK_CRED},
+        {"CURIE_SANDBOX_SUBSTRATE": "docker", "CLAUDE_CODE_OAUTH_TOKEN": _FAKE_SDK_CRED},
         _SUB,
     )
     assert len(calls) == 1
@@ -161,7 +161,7 @@ def test_main_installs_dead_letter_alerting(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    source_logger = logging.getLogger("agentos_worker.consumer")
+    source_logger = logging.getLogger("curie_worker.consumer")
     original_handlers = list(source_logger.handlers)
     original_propagate = source_logger.propagate
     for handler in original_handlers:
@@ -184,14 +184,14 @@ def test_main_installs_dead_letter_alerting(
                 "1730000000000-0",
                 2,
                 "max-delivery-exceeded",
-                "agentos:runs:dead",
+                "curie:runs:dead",
             )
 
         assert len(captured_coroutines) == 1
         alerts = [
             record
             for record in caplog.records
-            if record.name == "agentos_worker.alerts.dead_letter"
+            if record.name == "curie_worker.alerts.dead_letter"
             and record.levelno == logging.CRITICAL
         ]
         assert len(alerts) == 1, f"expected one dead letter alert, got {alerts}"
@@ -225,7 +225,7 @@ def test_supervise_restarts_a_crashing_task_until_shutdown(
             # Third run behaves like a real consumer: return once stopped.
             shutdown.set()
 
-        with caplog.at_level(logging.ERROR, logger="agentos_worker.run"):
+        with caplog.at_level(logging.ERROR, logger="curie_worker.run"):
             await asyncio.wait_for(
                 _supervise("evals", factory, shutdown, restart_backoff_s=0),
                 timeout=2,
@@ -235,7 +235,7 @@ def test_supervise_restarts_a_crashing_task_until_shutdown(
         restarts = [
             r
             for r in caplog.records
-            if r.name == "agentos_worker.run" and "crashed; restarting" in r.getMessage()
+            if r.name == "curie_worker.run" and "crashed; restarting" in r.getMessage()
         ]
         assert len(restarts) == 2
 

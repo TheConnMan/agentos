@@ -1,7 +1,7 @@
 """The frozen ACI conformance suite must pass against the runner's producer."""
 
 from aci_protocol import run_conformance
-from agentos_runner import conformance_producer
+from curie_runner import conformance_producer
 
 
 def test_runner_passes_aci_conformance() -> None:

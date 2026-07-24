@@ -1,6 +1,6 @@
 name: Helm CI
 
-# charts/agentos is the highest-blast-radius surface in the repo: a hardcoded
+# charts/curie is the highest-blast-radius surface in the repo: a hardcoded
 # value in a template applies to every install with no rollout control. This
 # job gives the chart the CI it otherwise lacks -- lint, render every shipped
 # values overlay, and schema-validate the rendered manifests.
@@ -8,19 +8,19 @@ on:
   push:
     branches: [main]
     paths:
-      - "charts/agentos/**"
+      - "charts/curie/**"
       - ".github/workflows/helm-ci.yaml"
   pull_request:
     branches: [main]
     paths:
-      - "charts/agentos/**"
+      - "charts/curie/**"
       - ".github/workflows/helm-ci.yaml"
 
 permissions:
   contents: read
 
 env:
-  CHART: charts/agentos
+  CHART: charts/curie
   # Chart.yaml pins kubeVersion ">=1.25.0-0"; validate the rendered manifests
   # against a concrete, currently-supported minor.
   KUBE_VERSION: "1.29.0"
@@ -88,7 +88,7 @@ jobs:
       - name: helm render assertions (credential generation)
         run: |
           set -euo pipefail
-          bash charts/agentos/ci/render-assertions.sh
+          bash charts/curie/ci/render-assertions.sh
 
       # Prove the BYO-model LiteLLM sidecar (issue #253) is off by default,
       # renders fully when its values flag is enabled, and yields to local
@@ -96,7 +96,7 @@ jobs:
       - name: helm render assertions (litellm sidecar)
         run: |
           set -euo pipefail
-          bash charts/agentos/ci/litellm-sidecar-assertions.sh
+          bash charts/curie/ci/litellm-sidecar-assertions.sh
 
       # Prove the Langfuse web+worker containers carry a numeric runAsUser
       # alongside runAsNonRoot (issue #351) so the kubelet can verify non-root
@@ -104,7 +104,7 @@ jobs:
       - name: helm render assertions (langfuse runAsUser)
         run: |
           set -euo pipefail
-          bash charts/agentos/ci/langfuse-runasuser-assertions.sh
+          bash charts/curie/ci/langfuse-runasuser-assertions.sh
 
       # Prove the controller NetworkPolicy RBAC split (issue #350): exactly one
       # read-only cluster grant (get/list/watch) so the informer syncs, no
@@ -113,7 +113,7 @@ jobs:
       - name: helm render assertions (controller netpol RBAC)
         run: |
           set -euo pipefail
-          bash charts/agentos/ci/controller-rbac-assertions.sh
+          bash charts/curie/ci/controller-rbac-assertions.sh
 
       # Prove per-agent connector secrets (ADR-0009, #429) render as their own
       # Secret, do not leak into the shared chart Secret, and are absent by
@@ -121,7 +121,7 @@ jobs:
       - name: helm render assertions (per-agent connector secrets)
         run: |
           set -euo pipefail
-          bash charts/agentos/ci/connector-secrets-assertions.sh
+          bash charts/curie/ci/connector-secrets-assertions.sh
 
       # Prove every container in the untrusted sandbox pod renders the identical
       # Rail 3 hardened securityContext from the shared helper (issue #493), so a
@@ -130,7 +130,7 @@ jobs:
       - name: helm render assertions (sandbox hardening)
         run: |
           set -euo pipefail
-          bash charts/agentos/ci/sandbox-hardening-assertions.sh
+          bash charts/curie/ci/sandbox-hardening-assertions.sh
 
       # Prove every writable emptyDir volume in the sandbox pod (bundles,
       # mc-config, and one per hardening.writablePaths entry) carries an
@@ -140,7 +140,7 @@ jobs:
       - name: helm render assertions (sandbox emptyDir sizeLimit)
         run: |
           set -euo pipefail
-          bash charts/agentos/ci/sandbox-emptydir-sizelimit-assertions.sh
+          bash charts/curie/ci/sandbox-emptydir-sizelimit-assertions.sh
 
       # Prove the dispatcher is told where the platform API is and how to
       # authenticate to it (issue #442). Unwired, it falls back to its code
@@ -149,7 +149,7 @@ jobs:
       - name: helm render assertions (dispatcher API wiring)
         run: |
           set -euo pipefail
-          bash charts/agentos/ci/dispatcher-api-wiring-assertions.sh
+          bash charts/curie/ci/dispatcher-api-wiring-assertions.sh
 
       # Prove the tenant capacity ceiling (issue #758, ADR-0059 decision 4): the
       # ResourceQuota scopes to the sandbox PriorityClass with the published
@@ -161,7 +161,7 @@ jobs:
       - name: "helm render assertions (tenant capacity: ResourceQuota + LimitRange)"
         run: |
           set -euo pipefail
-          bash charts/agentos/ci/tenant-capacity-assertions.sh
+          bash charts/curie/ci/tenant-capacity-assertions.sh
 
       # Prove every sandbox container (runner, both bundle init containers, and
       # the litellm sidecar when enabled) declares an ephemeral-storage request
@@ -171,7 +171,7 @@ jobs:
       - name: helm render assertions (ephemeral-storage ceilings)
         run: |
           set -euo pipefail
-          bash charts/agentos/ci/ephemeral-storage-assertions.sh
+          bash charts/curie/ci/ephemeral-storage-assertions.sh
 
       - name: helm template + kubeconform (values-dev overlay)
         run: |

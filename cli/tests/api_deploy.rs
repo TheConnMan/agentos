@@ -3,9 +3,9 @@
 
 mod support;
 
-use agentos::api::{ApiClient, ChannelOutcome};
-use agentos::bundle::pack_tar_gz;
-use agentos::scaffold::scaffold;
+use curie::api::{ApiClient, ChannelOutcome};
+use curie::bundle::pack_tar_gz;
+use curie::scaffold::scaffold;
 use support::{serve, Response};
 
 const AGENT_ID: &str = "11111111-1111-1111-1111-111111111111";

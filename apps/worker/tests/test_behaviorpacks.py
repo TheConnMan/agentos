@@ -8,7 +8,7 @@ greeting glued to a real request), and tip sampling is deterministic per seed.
 from __future__ import annotations
 
 import pytest
-from agentos_worker.behaviorpacks import (
+from curie_worker.behaviorpacks import (
     BehaviorPacks,
     GreetingPack,
     HelpPack,

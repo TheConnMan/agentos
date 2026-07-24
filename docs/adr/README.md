@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Every architecture decision in AgentOS is recorded here as a numbered ADR. An ADR
+Every architecture decision in Curie is recorded here as a numbered ADR. An ADR
 captures **what was decided and when**, along with the reasoning and the
 alternatives weighed at that time.
 
@@ -23,7 +23,7 @@ so a collision fails the build rather than reaching main.
 ## The index
 
 The table below is generated from the ADR files themselves by
-`agentos_doclint` — number from each filename, title from its heading, status
+`curie_doclint` — number from each filename, title from its heading, status
 read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 `bash scripts/check-docs.sh` to regenerate, then commit the result.
 
@@ -50,7 +50,7 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0018 | [Greeting/help pre-model short-circuit in the kernel](0018-greeting-help-pre-model-short-circuit.md) | Accepted |
 | 0019 | [Freeze the eval-case format: one schema, frozen in place under apps/worker](0019-freeze-eval-case-format.md) | Accepted |
 | 0020 | [The message port: a rendering-free channel interface with capability negotiation](0020-message-port-rendering-free-channel-interface.md) | Accepted |
-| 0021 | [AgentOS is a harness for coding agents: the CLI's primary user is Claude Code](0021-agentos-is-a-harness-for-coding-agents.md) | Accepted |
+| 0021 | [Curie is a harness for coding agents: the CLI's primary user is Claude Code](0021-agentos-is-a-harness-for-coding-agents.md) | Accepted |
 | 0022 | [Eval completeness: run the same evals at every tier, grade what actually happened, and promote real traces into cases](0022-eval-completeness-tier-parity-and-trace-promotion.md) | Accepted |
 | 0023 | [Controller NetworkPolicy RBAC: cluster-scope read, namespace-scope mutate](0023-controller-networkpolicy-rbac-cluster-read-namespace-mutate.md) | Accepted |
 | 0024 | [`cluster deploy` reaches the platform API via the UI `/api` proxy](0024-deploy-reaches-api-via-ui-proxy.md) | Accepted |
@@ -73,7 +73,7 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0041 | [Every verb is answered at every tier](0041-every-verb-is-answered-at-every-tier.md) | Accepted |
 | 0042 | [Adopt LLM-as-a-Verifier: a continuous-score semantic grader and a live progress signal](0042-llm-as-a-verifier-grader-and-progress-signal.md) | Accepted |
 | 0043 | [The interface catalog is generated from declared front-matter and gated in CI](0043-generated-interface-catalog-and-doc-lint-gate.md) | Accepted |
-| 0044 | [Workflow-controlled agents run on AgentOS as a callable substrate first, a unified plane only on demand](0044-workflow-controlled-agents-callable-substrate.md) | Proposed |
+| 0044 | [Workflow-controlled agents run on Curie as a callable substrate first, a unified plane only on demand](0044-workflow-controlled-agents-callable-substrate.md) | Proposed |
 | 0045 | [The status line is the mutable part of an immutable ADR](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md) | Accepted |
 | 0046 | [Converged approval gates: durable provenance, loud route resolution, and observe-only resume reconciliation](0046-converged-approval-gates-and-durable-provenance.md) | Accepted |
 | 0047 | [ADR-0047: Canonical env-var names for the API base URL and model credential](0047-canonical-env-var-names.md) | Accepted |
@@ -109,4 +109,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0077 | [Skill-tier durable approvals stay unavailable, reported not absent](0077-skill-tier-durable-approvals-stay-unavailable.md) | Accepted |
 | 0078 | [Route message-driven approval cards through the connected Slack transport](0078-approval-cards-over-connected-transport.md) | Accepted |
 | 0079 | [Inbound triggers as a new event kind, ingested by the API](0079-inbound-triggers-as-a-new-event-kind.md) | Proposed |
+| 0080 | [Rename the project to Curie](0080-rename-to-curie.md) | Accepted |
 <!-- END GENERATED: adr-index -->

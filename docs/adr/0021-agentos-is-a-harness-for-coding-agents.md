@@ -1,4 +1,4 @@
-# 21. AgentOS is a harness for coding agents: the CLI's primary user is Claude Code
+# 21. Curie is a harness for coding agents: the CLI's primary user is Claude Code
 
 Date: 2026-07-11
 Status: Accepted
@@ -6,26 +6,26 @@ Status: Accepted
 Status corrected from `Proposed` under
 [ADR-0045](0045-the-status-line-is-the-mutable-part-of-an-immutable-adr.md): the
 positioning is built and is asserted as settled in the repo `README.md`
-("AgentOS is a harness that runs the same immutable bundle..."). The agent-facing
+("Curie is a harness that runs the same immutable bundle..."). The agent-facing
 CLI contract ships: `cli/src/exit.rs` (the `ExitClass` 0/1/2/3 classes),
-`cli/src/guide.rs` (the `agentos guide` primer), and
+`cli/src/guide.rs` (the `curie guide` primer), and
 `cli/src/scaffold.rs` (which scaffolds a root `AGENTS.md` and an installable
-`.claude/skills/using-agentos/SKILL.md`). Later ADRs already extend it as a
+`.claude/skills/using-curie/SKILL.md`). Later ADRs already extend it as a
 settled premise (e.g. 0038).
 
 ## Context
 
 Developers are building agents by pointing a coding agent (Claude Code, Codex,
-Cursor) at the work, not by hand-writing every file. The interface to AgentOS is
+Cursor) at the work, not by hand-writing every file. The interface to Curie is
 therefore drifting away from the developer's own hands and toward the developer's
-coding agent. In the limit, a human rarely types `agentos` directly: they point
-Claude Code at AgentOS and it authors the skills, wires the MCP servers, writes
+coding agent. In the limit, a human rarely types `curie` directly: they point
+Claude Code at Curie and it authors the skills, wires the MCP servers, writes
 the evals, and ships the bundle.
 
 A coding agent can already write a `skill.md`. What it cannot do on its own is
 guarantee that a skill working in a local chat behaves identically as a deployed
 local process and again on Kubernetes. It authors the skill blind to how the
-skill is deployed. That deployment-parity guarantee is exactly what AgentOS
+skill is deployed. That deployment-parity guarantee is exactly what Curie
 already provides: the same immutable bundle and the same eval suite run across
 tiers ([ADR-0014](0014-git-push-is-the-deploy.md)), on a substrate-agnostic core
 ([ADR-0012](0012-substrate-and-channel-agnostic-core.md)), local-first by
@@ -48,7 +48,7 @@ of onboarding the *agent* rather than the human developer.
 
 ## Decision
 
-The CLI's primary consumer is a coding agent, driven by a developer. AgentOS is a
+The CLI's primary consumer is a coding agent, driven by a developer. Curie is a
 harness a coding agent uses to build agents properly. This is a positioning and
 design commitment, not a single feature; it constrains how we build every
 command.
@@ -63,7 +63,7 @@ command.
 
 2. **The harness is self-describing.** A single primer command emits a compact,
    self-contained "how to use this harness" document modeled on `SKILL.md`
-   (roughly 100 lines, ordered by what the agent needs first), and `agentos init`
+   (roughly 100 lines, ordered by what the agent needs first), and `curie init`
    drops an installable Agent Skill plus an `AGENTS.md` into the target repo so
    coding agents auto-discover it through the standards they already scan. The
    primer carries only **non-discoverable** knowledge (the when/which decision
@@ -97,7 +97,7 @@ command.
   actionable, and unstructured output forces the agent to parse guesswork. Human
   usability is preserved as a side effect (a good agent primer reads well to
   humans too), but it is no longer the primary constraint.
-- **Rely on the model's training data to know how to use AgentOS.** Rejected: the
+- **Rely on the model's training data to know how to use Curie.** Rejected: the
   Supabase result shows agents default to stale or absent training knowledge and
   skip reference docs even when fetch tools exist. A runtime-emitted primer is the
   only mechanism that corrects this on every invocation regardless of the model's
@@ -108,7 +108,7 @@ command.
   one entry point this repo already commits to (`cli/CLAUDE.md`). An MCP surface
   can wrap the same commands later without changing this decision.
 - **Drop "developer-first" for "agent-first."** Rejected: the developer still
-  chooses AgentOS, owns the stack, and self-hosts it. What changes is the
+  chooses Curie, owns the stack, and self-hosts it. What changes is the
   interface they operate it through, not who adopts it. Agent-operable is how the
   developer's chosen box gets driven, not a different audience.
 
@@ -118,10 +118,10 @@ command.
   exit codes, non-interactive, idempotent, recovery-oriented errors. This becomes a
   review checklist and, where mechanical, a CI gate.
 - The primer and the CLI grammar must not drift. The machine-readable command
-  manifest ([#145](https://github.com/curie-eng/agentos/issues/145)) is the
+  manifest ([#145](https://github.com/curie-eng/curie/issues/145)) is the
   verify-first surface and the primer's source of truth; a grammar change that does
   not regenerate it is a build failure.
-- `agentos init` scaffolding becomes the thing the agent is actually building, and
+- `curie init` scaffolding becomes the thing the agent is actually building, and
   ships an Agent Skill + `AGENTS.md` alongside the bundle, not a fixed example.
 - Discoverability strategy shifts from generic "build agents" SEO to the parity
   pain ("my agent worked locally but broke deployed"), and publishing the harness's

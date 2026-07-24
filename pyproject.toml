@@ -1,16 +1,16 @@
 [project]
-name = "agentos-workspace"
+name = "curie-workspace"
 version = "0.0.0"
-description = "Relay (AgentOS) monorepo workspace root"
+description = "Relay (Curie) monorepo workspace root"
 requires-python = ">=3.13"
 dependencies = [
     "aci-protocol",
-    "agentos-channel-protocol",
+    "curie-channel-protocol",
     "plugin-format",
-    "agentos-api",
-    "agentos-dispatcher",
-    "agentos-worker",
-    "agentos-runner",
+    "curie-api",
+    "curie-dispatcher",
+    "curie-worker",
+    "curie-runner",
 ]
 
 [tool.uv]
@@ -32,21 +32,21 @@ members = [
 
 [tool.uv.sources]
 aci-protocol = { workspace = true }
-agentos-channel-protocol = { workspace = true }
+curie-channel-protocol = { workspace = true }
 plugin-format = { workspace = true }
-agentos-test-support = { workspace = true }
-agentos-api = { workspace = true }
-agentos-dispatcher = { workspace = true }
-agentos-worker = { workspace = true }
-agentos-runner = { workspace = true }
-agentos-doclint = { workspace = true }
-agentos-wire-tolerance-gate = { workspace = true }
+curie-test-support = { workspace = true }
+curie-api = { workspace = true }
+curie-dispatcher = { workspace = true }
+curie-worker = { workspace = true }
+curie-runner = { workspace = true }
+curie-doclint = { workspace = true }
+curie-wire-tolerance-gate = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "agentos-doclint",
-    "agentos-wire-tolerance-gate",
-    "agentos-test-support",
+    "curie-doclint",
+    "curie-wire-tolerance-gate",
+    "curie-test-support",
     "pytest>=8.3",
     "ruff>=0.16.0",
     "mypy>=2.3.0",
@@ -72,7 +72,7 @@ testpaths = [
     "tools/wire-tolerance-gate/tests",
     # Only the offline harness unit tests -- NOT the whole tree: the cluster
     # scenario in test_soak_resilience.py stays out of default collection and
-    # runs only under AGENTOS_SOAK=1 (#499).
+    # runs only under CURIE_SOAK=1 (#499).
     "tests/soak/test_harness_unit.py",
 ]
 
@@ -122,7 +122,7 @@ files = [
 ]
 
 # The official kubernetes client ships no type stubs; keep its boundary typed
-# on our side (apps/worker/src/agentos_worker/sandbox/k8s.py) instead.
+# on our side (apps/worker/src/curie_worker/sandbox/k8s.py) instead.
 [[tool.mypy.overrides]]
 module = "kubernetes.*"
 ignore_missing_imports = true

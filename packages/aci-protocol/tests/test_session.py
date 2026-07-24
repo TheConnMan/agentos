@@ -18,11 +18,11 @@ def _full_config() -> SessionConfig:
 def test_to_env_and_from_env_roundtrip() -> None:
     config = _full_config()
     env = config.to_env()
-    assert env["AGENTOS_PLUGIN_DIR"] == "/plugins/demo"
-    assert env["AGENTOS_SESSION_ID"] == "thread-123"
-    assert env["AGENTOS_SANDBOX_ID"] == "sbx-abc"
-    assert env["AGENTOS_MEMORY_REF"] == "s3://bucket/memory"
-    assert env["AGENTOS_CREDENTIALS"] == "k8s://secret/demo"
+    assert env["CURIE_PLUGIN_DIR"] == "/plugins/demo"
+    assert env["CURIE_SESSION_ID"] == "thread-123"
+    assert env["CURIE_SANDBOX_ID"] == "sbx-abc"
+    assert env["CURIE_MEMORY_REF"] == "s3://bucket/memory"
+    assert env["CURIE_CREDENTIALS"] == "k8s://secret/demo"
     assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector:4318"
     assert env["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf"
 
@@ -37,8 +37,8 @@ def test_optional_fields_are_omitted_from_env() -> None:
         budget=Budget(max_output_tokens_per_run=100, max_usd_per_day=1.0),
     )
     env = config.to_env()
-    assert "AGENTOS_MEMORY_REF" not in env
-    assert "AGENTOS_CREDENTIALS" not in env
+    assert "CURIE_MEMORY_REF" not in env
+    assert "CURIE_CREDENTIALS" not in env
     assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in env
     assert SessionConfig.from_env(env) == config
 
@@ -46,17 +46,17 @@ def test_optional_fields_are_omitted_from_env() -> None:
 def test_budget_travels_as_json() -> None:
     config = _full_config()
     env = config.to_env()
-    assert '"max_output_tokens_per_run":4096' in env["AGENTOS_BUDGET"]
+    assert '"max_output_tokens_per_run":4096' in env["CURIE_BUDGET"]
 
 
 def test_missing_required_env_var_raises() -> None:
     with pytest.raises(KeyError):
-        SessionConfig.from_env({"AGENTOS_PLUGIN_DIR": "/p"})
+        SessionConfig.from_env({"CURIE_PLUGIN_DIR": "/p"})
 
 
 def test_malformed_budget_json_raises() -> None:
     env = _full_config().to_env()
-    env["AGENTOS_BUDGET"] = "{not json"
+    env["CURIE_BUDGET"] = "{not json"
     with pytest.raises(ValidationError):
         SessionConfig.from_env(env)
 
@@ -68,7 +68,7 @@ def test_malformed_budget_json_raises() -> None:
 # overlay, substrate/chart, operator) and ONE consumer (the runner). BootEnv is
 # the consumer-union model; rendering is per-producer. There is deliberately no
 # whole-model to_env() on the wire path -- the worker cannot build one, because
-# it does not know AGENTOS_SANDBOX_ID, and emitting the full union from the
+# it does not know CURIE_SANDBOX_ID, and emitting the full union from the
 # worker is the clobber path (envVarsInjectionPolicy: Overrides, values.yaml:789).
 #
 # The load-bearing property is preserved per producer: the declaration moved,
@@ -97,8 +97,8 @@ _BUDGET_JSON = '{"max_output_tokens_per_run":4096,"task_budget_hint":null,"max_u
 # the docker substrate from the container name (docker.py:165). The runner port
 # is chart (agent-sandbox.yaml:430) / docker.py:167.
 _SUBSTRATE_ENV = {
-    "AGENTOS_SANDBOX_ID": "agentos-sandbox-abc123",
-    "AGENTOS_RUNNER_PORT": "8080",
+    "CURIE_SANDBOX_ID": "curie-sandbox-abc123",
+    "CURIE_RUNNER_PORT": "8080",
 }
 
 _PRODUCERS = ("worker", "kernel", "substrate", "operator")
@@ -214,14 +214,14 @@ def test_boot_env_composes_the_frozen_session_config_rather_than_extending_it() 
 def test_boot_env_from_env_coerces_empty_token_strings_to_none() -> None:
     """A declared-but-empty var must not become an empty credential.
 
-    Preserves runner/src/agentos_runner/config.py:105
-    ``runner_token=env.get("AGENTOS_RUNNER_TOKEN") or None``. Get this wrong and
+    Preserves runner/src/curie_runner/config.py:105
+    ``runner_token=env.get("CURIE_RUNNER_TOKEN") or None``. Get this wrong and
     the fake/local no-key path presents an empty bearer token.
     """
     env = BootEnv(session=_boot_session()).to_env()
-    env["AGENTOS_RUNNER_TOKEN"] = ""
-    env["AGENTOS_HISTORY_TOKEN"] = ""
-    env["AGENTOS_MEMORY_TOKEN"] = ""
+    env["CURIE_RUNNER_TOKEN"] = ""
+    env["CURIE_HISTORY_TOKEN"] = ""
+    env["CURIE_MEMORY_TOKEN"] = ""
     boot = BootEnv.from_env(env)
     assert boot.runner_token is None
     assert boot.history_token is None
@@ -231,7 +231,7 @@ def test_boot_env_from_env_coerces_empty_token_strings_to_none() -> None:
 @pytest.mark.parametrize("raw", ["1", "true", "TRUE", "True", "yes", "YES"])
 def test_boot_env_from_env_reads_the_runners_truthy_fake_model_values(raw: str) -> None:
     env = BootEnv(session=_boot_session()).to_env()
-    env["AGENTOS_FAKE_MODEL"] = raw
+    env["CURIE_FAKE_MODEL"] = raw
     assert BootEnv.from_env(env).fake_model is True
 
 
@@ -242,13 +242,13 @@ def test_boot_env_from_env_reads_every_other_fake_model_value_as_off(raw: str) -
     This is the half that regressed: the parse this replaces was
     ``fake_raw != "0"``, which turned ``false``, ``no``, ``off``, and every typo
     into fake-model ON, while the platform's only consumer
-    (runner/src/agentos_runner/__main__.py:262) reads
+    (runner/src/curie_runner/__main__.py:262) reads
     ``.lower() in ("1", "true", "yes")`` and sees them as OFF. A declared field
     whose parse contradicts its consumer is a trap for the next caller who
     reaches for ``BootEnv.from_env(env).fake_model``.
     """
     env = BootEnv(session=_boot_session()).to_env()
-    env["AGENTOS_FAKE_MODEL"] = raw
+    env["CURIE_FAKE_MODEL"] = raw
     assert BootEnv.from_env(env).fake_model is False
 
 
@@ -262,10 +262,10 @@ def test_boot_env_from_env_treats_an_absent_or_empty_fake_model_as_unset() -> No
     key blank, so no producer renders this shape.
     """
     env = BootEnv(session=_boot_session()).to_env()
-    assert "AGENTOS_FAKE_MODEL" not in env
+    assert "CURIE_FAKE_MODEL" not in env
     assert BootEnv.from_env(env).fake_model is None
     for blank in ("", " "):
-        env["AGENTOS_FAKE_MODEL"] = blank
+        env["CURIE_FAKE_MODEL"] = blank
         assert BootEnv.from_env(env).fake_model is None
 
 
@@ -281,16 +281,16 @@ def test_boot_env_declares_the_approval_resumed_kind_marker() -> None:
     It is a RunnerConfig field with no feature attached to it, so it is the
     easiest boot var in the set to lose in the move (Edge case 3).
     """
-    assert "AGENTOS_APPROVAL_RESUMED_KIND" in BootEnv.env_keys()
+    assert "CURIE_APPROVAL_RESUMED_KIND" in BootEnv.env_keys()
     boot = BootEnv(session=_boot_session(), approval_resumed_kind="policy")
     env = boot.to_env()
-    assert env["AGENTOS_APPROVAL_RESUMED_KIND"] == "policy"
+    assert env["CURIE_APPROVAL_RESUMED_KIND"] == "policy"
     assert BootEnv.from_env(env).approval_resumed_kind == "policy"
 
 
 def test_malformed_budget_json_raises_through_boot_env() -> None:
     env = BootEnv(session=_boot_session()).to_env()
-    env["AGENTOS_BUDGET"] = "{not json"
+    env["CURIE_BUDGET"] = "{not json"
     with pytest.raises(ValidationError):
         BootEnv.from_env(env)
 
@@ -299,7 +299,7 @@ def test_malformed_budget_json_raises_through_boot_env() -> None:
 #
 # Written out explicitly rather than computed from the model under test: a
 # literal derived from BootEnv would pass against a broken BootEnv. Each literal
-# is what binding.boot_env renders today for that shape, minus AGENTOS_AGENT_ID.
+# is what binding.boot_env renders today for that shape, minus CURIE_AGENT_ID.
 # These must keep passing when a BootEnv field is RENAMED internally -- the env
 # key is the contract, the attribute name is not.
 
@@ -307,23 +307,23 @@ def test_malformed_budget_json_raises_through_boot_env() -> None:
 def test_render_worker_matches_the_frozen_plain_bound_run_wire() -> None:
     """A bound run with a bundle, a pinned model, and a platform api_key."""
     assert _worker_env() == {
-        "AGENTOS_PLUGIN_DIR": "/plugins/bundle",
-        "AGENTOS_SESSION_ID": (
+        "CURIE_PLUGIN_DIR": "/plugins/bundle",
+        "CURIE_SESSION_ID": (
             "agent-11111111-2222-3333-4444-555555555555-thread-C0ABC/1720000000.001"
         ),
-        "AGENTOS_BUDGET": _BUDGET_JSON,
-        "AGENTOS_MEMORY_REF": (
+        "CURIE_BUDGET": _BUDGET_JSON,
+        "CURIE_MEMORY_REF": (
             "https://api.example.test/agents/11111111-2222-3333-4444-555555555555/state/memory"
         ),
-        "AGENTOS_BUNDLE_REF": "bundles/demo/abc123.tar.gz",
-        "AGENTOS_RUNNER_TOKEN": "rt-plain-token",
-        "AGENTOS_MODEL": "claude-opus-4-6",
-        "AGENTOS_HISTORY_REF": (
+        "CURIE_BUNDLE_REF": "bundles/demo/abc123.tar.gz",
+        "CURIE_RUNNER_TOKEN": "rt-plain-token",
+        "CURIE_MODEL": "claude-opus-4-6",
+        "CURIE_HISTORY_REF": (
             "https://api.example.test/agents/11111111-2222-3333-4444-555555555555"
             "/state/transcript/C0ABC%2F1720000000.001"
         ),
-        "AGENTOS_HISTORY_TOKEN": "st-scoped-token",
-        "AGENTOS_MEMORY_TOKEN": "st-scoped-token",
+        "CURIE_HISTORY_TOKEN": "st-scoped-token",
+        "CURIE_MEMORY_TOKEN": "st-scoped-token",
     }
 
 
@@ -337,25 +337,25 @@ def test_render_worker_matches_the_frozen_resume_boot_wire() -> None:
         runner_token="rt-resume-token",
         approval_required_tools=["Bash", "mcp__github__create_pr"],
     ) == {
-        "AGENTOS_PLUGIN_DIR": "/plugins/bundle",
-        "AGENTOS_SESSION_ID": (
+        "CURIE_PLUGIN_DIR": "/plugins/bundle",
+        "CURIE_SESSION_ID": (
             "agent-11111111-2222-3333-4444-555555555555-thread-C0ABC/1720000000.001"
         ),
-        "AGENTOS_BUDGET": _BUDGET_JSON,
-        "AGENTOS_MEMORY_REF": (
+        "CURIE_BUDGET": _BUDGET_JSON,
+        "CURIE_MEMORY_REF": (
             "https://api.example.test/agents/11111111-2222-3333-4444-555555555555/state/memory"
         ),
-        "AGENTOS_BUNDLE_REF": "bundles/demo/abc123.tar.gz",
-        "AGENTOS_RUNNER_TOKEN": "rt-resume-token",
-        "AGENTOS_MODEL": "claude-opus-4-6",
-        "AGENTOS_HISTORY_REF": (
+        "CURIE_BUNDLE_REF": "bundles/demo/abc123.tar.gz",
+        "CURIE_RUNNER_TOKEN": "rt-resume-token",
+        "CURIE_MODEL": "claude-opus-4-6",
+        "CURIE_HISTORY_REF": (
             "https://api.example.test/agents/11111111-2222-3333-4444-555555555555"
             "/state/transcript/C0ABC%2F1720000000.001"
         ),
-        "AGENTOS_HISTORY_TOKEN": "st-scoped-token",
-        "AGENTOS_MEMORY_TOKEN": "st-scoped-token",
+        "CURIE_HISTORY_TOKEN": "st-scoped-token",
+        "CURIE_MEMORY_TOKEN": "st-scoped-token",
         # binding.py:407 comma-joins the names, order preserved from the agent row.
-        "AGENTOS_APPROVAL_REQUIRED_TOOLS": "Bash,mcp__github__create_pr",
+        "CURIE_APPROVAL_REQUIRED_TOOLS": "Bash,mcp__github__create_pr",
     }
 
 
@@ -363,7 +363,7 @@ def test_render_worker_matches_the_frozen_fake_local_boot_wire() -> None:
     """The no-api-key fake/local path: no token is minted, so none is set.
 
     binding.py:430 gates MEMORY_TOKEN/HISTORY_TOKEN on config.api_key, and
-    apply_model_env sets AGENTOS_FAKE_MODEL='1' with no model and no credential.
+    apply_model_env sets CURIE_FAKE_MODEL='1' with no model and no credential.
     """
     assert _worker_env(
         runner_token="rt-fake-token",
@@ -372,19 +372,19 @@ def test_render_worker_matches_the_frozen_fake_local_boot_wire() -> None:
         history_token=None,
         memory_token=None,
     ) == {
-        "AGENTOS_PLUGIN_DIR": "/plugins/bundle",
-        "AGENTOS_SESSION_ID": (
+        "CURIE_PLUGIN_DIR": "/plugins/bundle",
+        "CURIE_SESSION_ID": (
             "agent-11111111-2222-3333-4444-555555555555-thread-C0ABC/1720000000.001"
         ),
-        "AGENTOS_BUDGET": _BUDGET_JSON,
-        "AGENTOS_MEMORY_REF": (
+        "CURIE_BUDGET": _BUDGET_JSON,
+        "CURIE_MEMORY_REF": (
             "https://api.example.test/agents/11111111-2222-3333-4444-555555555555/state/memory"
         ),
-        "AGENTOS_BUNDLE_REF": "bundles/demo/abc123.tar.gz",
-        "AGENTOS_RUNNER_TOKEN": "rt-fake-token",
+        "CURIE_BUNDLE_REF": "bundles/demo/abc123.tar.gz",
+        "CURIE_RUNNER_TOKEN": "rt-fake-token",
         # apply_model_env renders the flag as the literal "1", never "true".
-        "AGENTOS_FAKE_MODEL": "1",
-        "AGENTOS_HISTORY_REF": (
+        "CURIE_FAKE_MODEL": "1",
+        "CURIE_HISTORY_REF": (
             "https://api.example.test/agents/11111111-2222-3333-4444-555555555555"
             "/state/transcript/C0ABC%2F1720000000.001"
         ),
@@ -397,13 +397,13 @@ def test_render_worker_omits_unset_optionals_rather_than_emitting_empty_strings(
         bundle_ref=None, model=None, history_token=None, memory_token=None, runner_token=None
     )
     for key in (
-        "AGENTOS_BUNDLE_REF",
-        "AGENTOS_RUNNER_TOKEN",
-        "AGENTOS_MODEL",
-        "AGENTOS_FAKE_MODEL",
-        "AGENTOS_HISTORY_TOKEN",
-        "AGENTOS_MEMORY_TOKEN",
-        "AGENTOS_APPROVAL_REQUIRED_TOOLS",
+        "CURIE_BUNDLE_REF",
+        "CURIE_RUNNER_TOKEN",
+        "CURIE_MODEL",
+        "CURIE_FAKE_MODEL",
+        "CURIE_HISTORY_TOKEN",
+        "CURIE_MEMORY_TOKEN",
+        "CURIE_APPROVAL_REQUIRED_TOOLS",
         "ANTHROPIC_BASE_URL",
     ):
         assert key not in env, f"{key} must be omitted when unset, not emitted empty"
@@ -417,13 +417,13 @@ def test_render_worker_omits_unset_optionals_rather_than_emitting_empty_strings(
 def test_render_worker_never_emits_substrate_owned_identity_or_port(shape: str) -> None:
     """THE ANTI-CLOBBER GUARD. Do not weaken this test; read why first.
 
-    charts/agentos/values.yaml:789 sets ``envVarsInjectionPolicy: Overrides``,
+    charts/curie/values.yaml:789 sets ``envVarsInjectionPolicy: Overrides``,
     and agent-sandbox.yaml:15 states that per-claim injection WINS over the pod
-    template's own env. So if the worker ever emitted AGENTOS_SANDBOX_ID, it
+    template's own env. So if the worker ever emitted CURIE_SANDBOX_ID, it
     would REPLACE the chart's ``fieldRef: metadata.name`` value
     (agent-sandbox.yaml:422-427) with a worker-invented one and break the
     "pod name IS the sandbox id" invariant that trace stamping (otel.py:43) and
-    operator correlation depend on. AGENTOS_RUNNER_PORT is the same story
+    operator correlation depend on. CURIE_RUNNER_PORT is the same story
     (agent-sandbox.yaml:430, docker.py:167).
 
     Both keys are substrate-owned. The docker tier is only INCIDENTALLY shielded
@@ -436,12 +436,12 @@ def test_render_worker_never_emits_substrate_owned_identity_or_port(shape: str) 
         "fake": {"model": None, "fake_model": True, "history_token": None, "memory_token": None},
     }
     env = _worker_env(**shapes[shape])
-    assert "AGENTOS_SANDBOX_ID" not in env, (
-        "the worker must never emit AGENTOS_SANDBOX_ID: envVarsInjectionPolicy=Overrides "
+    assert "CURIE_SANDBOX_ID" not in env, (
+        "the worker must never emit CURIE_SANDBOX_ID: envVarsInjectionPolicy=Overrides "
         "would clobber the chart's fieldRef metadata.name and break sandbox identity"
     )
-    assert "AGENTOS_RUNNER_PORT" not in env, (
-        "the worker must never emit AGENTOS_RUNNER_PORT: it is substrate-owned "
+    assert "CURIE_RUNNER_PORT" not in env, (
+        "the worker must never emit CURIE_RUNNER_PORT: it is substrate-owned "
         "(agent-sandbox.yaml:430, docker.py:167)"
     )
 
@@ -449,7 +449,7 @@ def test_render_worker_never_emits_substrate_owned_identity_or_port(shape: str) 
 def test_render_worker_emits_exactly_the_worker_owned_key_subset() -> None:
     """The render surface cannot drift from the producer map in either direction.
 
-    The one carve-out is AGENTOS_CONNECTOR_SECRET_KEYS: inject_connector_secrets
+    The one carve-out is CURIE_CONNECTOR_SECRET_KEYS: inject_connector_secrets
     (binding.py:482-515) stays its sole writer, setting it on the merged dict
     after the render returns (Edge case 9), so the #457 order-independent filter
     and #429 marker semantics are byte-identical to today.
@@ -466,7 +466,7 @@ def test_render_worker_emits_exactly_the_worker_owned_key_subset() -> None:
     )
     worker_owned = set(BootEnv.env_keys(producer="worker"))
     assert set(maximal) <= worker_owned
-    assert worker_owned - set(maximal) == {"AGENTOS_CONNECTOR_SECRET_KEYS"}
+    assert worker_owned - set(maximal) == {"CURIE_CONNECTOR_SECRET_KEYS"}
 
 
 # --- Golden 3: the kernel resume overlay. ------------------------------------
@@ -478,21 +478,21 @@ def test_the_kernel_owns_exactly_the_three_approval_resume_keys() -> None:
     They are a distinct producer: same process, different code path, rendered
     independently. The kernel sets them via the exported constants, so the
     producer map is what pins the overlay's exact extent. ADR-0076/#889 added
-    ``AGENTOS_APPROVAL_DECISION`` alongside the original two.
+    ``CURIE_APPROVAL_DECISION`` alongside the original two.
     """
     assert set(BootEnv.env_keys(producer="kernel")) == {
-        "AGENTOS_APPROVAL_GRANT_TOOL",
-        "AGENTOS_APPROVAL_RESUMED_KIND",
-        "AGENTOS_APPROVAL_DECISION",
+        "CURIE_APPROVAL_GRANT_TOOL",
+        "CURIE_APPROVAL_RESUMED_KIND",
+        "CURIE_APPROVAL_DECISION",
     }
 
 
 def test_the_kernel_overlay_keys_are_not_worker_rendered() -> None:
     """binding.boot_env never sets them; only the resume path does."""
     env = _worker_env(approval_required_tools=["Bash"])
-    assert "AGENTOS_APPROVAL_GRANT_TOOL" not in env
-    assert "AGENTOS_APPROVAL_RESUMED_KIND" not in env
-    assert "AGENTOS_APPROVAL_DECISION" not in env
+    assert "CURIE_APPROVAL_GRANT_TOOL" not in env
+    assert "CURIE_APPROVAL_RESUMED_KIND" not in env
+    assert "CURIE_APPROVAL_DECISION" not in env
 
 
 # --- Golden 4: the consumer parse. -------------------------------------------
@@ -505,7 +505,7 @@ def test_from_env_parses_the_worker_subset_plus_the_substrate_fixture() -> None:
     on the same env (config.py:94-106).
     """
     boot = BootEnv.from_env(_worker_env() | _SUBSTRATE_ENV)
-    assert boot.session.sandbox_id == "agentos-sandbox-abc123"
+    assert boot.session.sandbox_id == "curie-sandbox-abc123"
     assert boot.session.plugin_dir == "/plugins/bundle"
     assert boot.session.session_id == _SESSION_ID
     assert boot.session.budget.max_output_tokens_per_run == 4096
@@ -524,7 +524,7 @@ def test_from_env_on_the_worker_subset_alone_raises() -> None:
     """Fail-loud by design; do not soften into a default.
 
     The worker subset is not a complete boot env: no producer in the worker lane
-    sets AGENTOS_SANDBOX_ID, and SessionConfig.from_env reaches it by bracket
+    sets CURIE_SANDBOX_ID, and SessionConfig.from_env reaches it by bracket
     access (session.py:107). Every real boot surface supplies it (chart fieldRef,
     docker.py:165, docker.rs:92), so a KeyError here means a genuinely broken
     substrate, which is exactly when the runner should refuse to boot.
@@ -535,8 +535,8 @@ def test_from_env_on_the_worker_subset_alone_raises() -> None:
 
 def test_from_env_parses_the_resume_overlay() -> None:
     overlay = {
-        "AGENTOS_APPROVAL_GRANT_TOOL": "Bash",
-        "AGENTOS_APPROVAL_RESUMED_KIND": "policy",
+        "CURIE_APPROVAL_GRANT_TOOL": "Bash",
+        "CURIE_APPROVAL_RESUMED_KIND": "policy",
     }
     boot = BootEnv.from_env(
         _worker_env(approval_required_tools=["Bash", "mcp__github__create_pr"])
@@ -553,10 +553,10 @@ def test_from_env_parses_the_resume_overlay() -> None:
 # Deliberately NOT unified. Each var keeps the behavior it has today. The knobs
 # are operator-owned: no code producer emits them, they are int | None = None on
 # the model, and the defaults are applied where the runner consumes the parsed
-# value. AGENTOS_HISTORY_MAX_TURNS/BYTES are read through __main__._int_env,
+# value. CURIE_HISTORY_MAX_TURNS/BYTES are read through __main__._int_env,
 # which degrades to the default on garbage AND on nonpositive values
 # (__main__.py:219-231); a ValidationError there would crash the sandbox at boot
-# where it used to degrade. AGENTOS_MAX_TURNS uses a bare int() (config.py:98)
+# where it used to degrade. CURIE_MAX_TURNS uses a bare int() (config.py:98)
 # and does raise. Unifying them is a behavior change wearing a consistency costume.
 
 
@@ -579,8 +579,8 @@ def test_knobs_and_port_hold_no_default_value_on_the_model_itself() -> None:
 
     Tested through direct construction, not from_env: a from_env that passes the
     field explicitly would mask a non-None field default. That default is not
-    cosmetic -- it would make to_env render AGENTOS_MAX_TURNS=20 and
-    AGENTOS_RUNNER_PORT=8080, keys no producer sends, moving the wire and (for
+    cosmetic -- it would make to_env render CURIE_MAX_TURNS=20 and
+    CURIE_RUNNER_PORT=8080, keys no producer sends, moving the wire and (for
     the port) handing the worker a substrate-owned key to clobber.
     """
     boot = BootEnv(session=_boot_session())
@@ -590,10 +590,10 @@ def test_knobs_and_port_hold_no_default_value_on_the_model_itself() -> None:
     assert boot.port is None
     env = boot.to_env()
     for key in (
-        "AGENTOS_MAX_TURNS",
-        "AGENTOS_HISTORY_MAX_TURNS",
-        "AGENTOS_HISTORY_MAX_BYTES",
-        "AGENTOS_RUNNER_PORT",
+        "CURIE_MAX_TURNS",
+        "CURIE_HISTORY_MAX_TURNS",
+        "CURIE_HISTORY_MAX_BYTES",
+        "CURIE_RUNNER_PORT",
     ):
         assert key not in env, f"{key} was rendered although no producer set it"
 
@@ -603,9 +603,9 @@ def test_knobs_parse_when_set_through_the_declared_operator_surface() -> None:
         _worker_env()
         | _SUBSTRATE_ENV
         | {
-            "AGENTOS_MAX_TURNS": "5",
-            "AGENTOS_HISTORY_MAX_TURNS": "7",
-            "AGENTOS_HISTORY_MAX_BYTES": "512",
+            "CURIE_MAX_TURNS": "5",
+            "CURIE_HISTORY_MAX_TURNS": "7",
+            "CURIE_HISTORY_MAX_BYTES": "512",
         }
     )
     boot = BootEnv.from_env(env)
@@ -626,8 +626,8 @@ def test_history_window_knobs_degrade_rather_than_raise_on_garbage(garbage: str)
         _worker_env()
         | _SUBSTRATE_ENV
         | {
-            "AGENTOS_HISTORY_MAX_TURNS": garbage,
-            "AGENTOS_HISTORY_MAX_BYTES": garbage,
+            "CURIE_HISTORY_MAX_TURNS": garbage,
+            "CURIE_HISTORY_MAX_BYTES": garbage,
         }
     )
     boot = BootEnv.from_env(env)
@@ -637,7 +637,7 @@ def test_history_window_knobs_degrade_rather_than_raise_on_garbage(garbage: str)
 
 def test_max_turns_raises_on_garbage_rather_than_degrading() -> None:
     """config.py:98 uses a bare int() today and DOES raise. Keep it raising."""
-    env = _worker_env() | _SUBSTRATE_ENV | {"AGENTOS_MAX_TURNS": "not-a-number"}
+    env = _worker_env() | _SUBSTRATE_ENV | {"CURIE_MAX_TURNS": "not-a-number"}
     with pytest.raises((ValueError, ValidationError)):
         BootEnv.from_env(env)
 
@@ -651,9 +651,9 @@ def test_no_code_producer_owns_the_knobs() -> None:
     no code producer emits collector auth headers.
     """
     assert set(BootEnv.env_keys(producer="operator")) == {
-        "AGENTOS_MAX_TURNS",
-        "AGENTOS_HISTORY_MAX_TURNS",
-        "AGENTOS_HISTORY_MAX_BYTES",
+        "CURIE_MAX_TURNS",
+        "CURIE_HISTORY_MAX_TURNS",
+        "CURIE_HISTORY_MAX_BYTES",
         "OTEL_EXPORTER_OTLP_HEADERS",
     }
 
@@ -665,43 +665,43 @@ def test_env_keys_declares_the_whole_flattened_boot_surface() -> None:
     """The exported key list is flattened: nested SessionConfig and OTel keys too.
 
     The chart's render-assert compares the runner container's env names against
-    this list, and the template itself bakes AGENTOS_RUNNER_PORT
+    this list, and the template itself bakes CURIE_RUNNER_PORT
     (agent-sandbox.yaml:430) and the OTel keys (433/435). A non-flattened list
     would fail a default render.
     """
     assert set(BootEnv.env_keys()) == {
         # via session: SessionConfig
-        "AGENTOS_PLUGIN_DIR",
-        "AGENTOS_SESSION_ID",
-        "AGENTOS_SANDBOX_ID",
-        "AGENTOS_BUDGET",
-        "AGENTOS_MEMORY_REF",
-        "AGENTOS_CREDENTIALS",
+        "CURIE_PLUGIN_DIR",
+        "CURIE_SESSION_ID",
+        "CURIE_SANDBOX_ID",
+        "CURIE_BUDGET",
+        "CURIE_MEMORY_REF",
+        "CURIE_CREDENTIALS",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_HEADERS",
         "OTEL_EXPORTER_OTLP_PROTOCOL",
         # platform-operational, declared on BootEnv itself
-        "AGENTOS_BUNDLE_REF",
-        "AGENTOS_RUNNER_TOKEN",
-        "AGENTOS_MODEL",
-        "AGENTOS_FAKE_MODEL",
-        "AGENTOS_HISTORY_REF",
-        "AGENTOS_HISTORY_TOKEN",
-        "AGENTOS_MEMORY_TOKEN",
-        "AGENTOS_STATE_URL",
-        "AGENTOS_STATE_TOKEN",
-        "AGENTOS_APPROVAL_REQUIRED_TOOLS",
-        "AGENTOS_APPROVAL_GRANT_TOOL",
-        "AGENTOS_APPROVAL_RESUMED_KIND",
-        "AGENTOS_APPROVAL_DECISION",
-        "AGENTOS_CONNECTOR_SECRET_KEYS",
-        "AGENTOS_RUNNER_PORT",
+        "CURIE_BUNDLE_REF",
+        "CURIE_RUNNER_TOKEN",
+        "CURIE_MODEL",
+        "CURIE_FAKE_MODEL",
+        "CURIE_HISTORY_REF",
+        "CURIE_HISTORY_TOKEN",
+        "CURIE_MEMORY_TOKEN",
+        "CURIE_STATE_URL",
+        "CURIE_STATE_TOKEN",
+        "CURIE_APPROVAL_REQUIRED_TOOLS",
+        "CURIE_APPROVAL_GRANT_TOOL",
+        "CURIE_APPROVAL_RESUMED_KIND",
+        "CURIE_APPROVAL_DECISION",
+        "CURIE_CONNECTOR_SECRET_KEYS",
+        "CURIE_RUNNER_PORT",
         "ANTHROPIC_BASE_URL",
-        "AGENTOS_MODEL_API_BACKEND",
-        "AGENTOS_MODEL_ENV_KEY",
-        "AGENTOS_MAX_TURNS",
-        "AGENTOS_HISTORY_MAX_TURNS",
-        "AGENTOS_HISTORY_MAX_BYTES",
+        "CURIE_MODEL_API_BACKEND",
+        "CURIE_MODEL_ENV_KEY",
+        "CURIE_MAX_TURNS",
+        "CURIE_HISTORY_MAX_TURNS",
+        "CURIE_HISTORY_MAX_BYTES",
     }
 
 
@@ -745,7 +745,7 @@ def test_substrate_identity_keys_are_substrate_only_and_never_worker_written() -
     worker-wins is intended. The distinction is which side owns the truth, not
     how many producers a key has.
     """
-    for key in ("AGENTOS_SANDBOX_ID", "AGENTOS_RUNNER_PORT"):
+    for key in ("CURIE_SANDBOX_ID", "CURIE_RUNNER_PORT"):
         assert _producers_of(key) == {"substrate"}, (
             f"{key} is substrate-authoritative; a non-substrate producer would clobber it "
             "under envVarsInjectionPolicy=Overrides"
@@ -777,8 +777,8 @@ def test_the_substrate_writes_identity_otel_and_the_warm_pool_defaults() -> None
     assert set(BootEnv.env_keys(producer="substrate")) == {
         # Substrate-authoritative: the substrate owns the truth and a worker
         # write would clobber it.
-        "AGENTOS_SANDBOX_ID",
-        "AGENTOS_RUNNER_PORT",
+        "CURIE_SANDBOX_ID",
+        "CURIE_RUNNER_PORT",
         "OTEL_EXPORTER_OTLP_ENDPOINT",  # agent-sandbox.yaml:433
         "OTEL_EXPORTER_OTLP_PROTOCOL",  # agent-sandbox.yaml:435
         # Worker-authoritative with a substrate fallback: the chart bakes a
@@ -786,12 +786,12 @@ def test_the_substrate_writes_identity_otel_and_the_warm_pool_defaults() -> None
         # resolvable, and the worker's per-claim value legitimately wins under
         # envVarsInjectionPolicy=Overrides.
         "ANTHROPIC_BASE_URL",  # agent-sandbox.yaml:387, 404
-        "AGENTOS_MODEL",  # agent-sandbox.yaml:389, 397
-        "AGENTOS_FAKE_MODEL",  # agent-sandbox.yaml:381
-        "AGENTOS_CREDENTIALS",  # agent-sandbox.yaml:410 (secretKeyRef)
-        "AGENTOS_PLUGIN_DIR",  # agent-sandbox.yaml:416
-        "AGENTOS_SESSION_ID",  # agent-sandbox.yaml:420 ("warm-unbound")
-        "AGENTOS_BUDGET",  # agent-sandbox.yaml:428
+        "CURIE_MODEL",  # agent-sandbox.yaml:389, 397
+        "CURIE_FAKE_MODEL",  # agent-sandbox.yaml:381
+        "CURIE_CREDENTIALS",  # agent-sandbox.yaml:410 (secretKeyRef)
+        "CURIE_PLUGIN_DIR",  # agent-sandbox.yaml:416
+        "CURIE_SESSION_ID",  # agent-sandbox.yaml:420 ("warm-unbound")
+        "CURIE_BUDGET",  # agent-sandbox.yaml:428
     }
 
 
@@ -807,12 +807,12 @@ def test_the_nine_frozen_session_keys_are_declared_and_tagged() -> None:
     # _full_config leaves OtelConfig.headers unset, so its key is the one of the
     # nine that a maximal SessionConfig render still omits.
     assert rendered | {"OTEL_EXPORTER_OTLP_HEADERS"} == {
-        "AGENTOS_PLUGIN_DIR",
-        "AGENTOS_SESSION_ID",
-        "AGENTOS_SANDBOX_ID",
-        "AGENTOS_BUDGET",
-        "AGENTOS_MEMORY_REF",
-        "AGENTOS_CREDENTIALS",
+        "CURIE_PLUGIN_DIR",
+        "CURIE_SESSION_ID",
+        "CURIE_SANDBOX_ID",
+        "CURIE_BUDGET",
+        "CURIE_MEMORY_REF",
+        "CURIE_CREDENTIALS",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_HEADERS",
         "OTEL_EXPORTER_OTLP_PROTOCOL",
@@ -823,8 +823,8 @@ def test_the_nine_frozen_session_keys_are_declared_and_tagged() -> None:
 
 
 def test_agent_id_is_not_a_declared_boot_key() -> None:
-    """AGENTOS_AGENT_ID was written by the worker and read by nothing (#488 AC4)."""
-    assert "AGENTOS_AGENT_ID" not in BootEnv.env_keys()
+    """CURIE_AGENT_ID was written by the worker and read by nothing (#488 AC4)."""
+    assert "CURIE_AGENT_ID" not in BootEnv.env_keys()
 
 
 def test_every_rendered_key_is_a_declared_env_key() -> None:

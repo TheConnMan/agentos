@@ -1,9 +1,9 @@
-# AgentOS dispatcher image (Slack Bolt, Socket Mode).
+# Curie dispatcher image (Slack Bolt, Socket Mode).
 #
 # BUILD FROM THE REPO ROOT (uv workspace); see runner/Dockerfile and
 # apps/api/Dockerfile for the shared pattern:
 #
-#   docker build -f apps/dispatcher/Dockerfile -t agentos-dispatcher .
+#   docker build -f apps/dispatcher/Dockerfile -t curie-dispatcher .
 #
 # Socket Mode means no inbound HTTP: the process dials Slack out, so there is no
 # server port. The chart uses a heartbeat-file exec liveness probe (a daemon
@@ -15,7 +15,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never
 COPY . .
-RUN uv sync --frozen --no-dev --no-editable --package agentos-dispatcher
+RUN uv sync --frozen --no-dev --no-editable --package curie-dispatcher
 
 FROM python:3.13-slim
 RUN groupadd -g 1000 app && useradd -u 1000 -g app -m -d /home/app app
@@ -23,4 +23,4 @@ WORKDIR /app
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 USER 1000
-CMD ["python", "-m", "agentos_dispatcher"]
+CMD ["python", "-m", "curie_dispatcher"]

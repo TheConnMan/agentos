@@ -1,61 +1,61 @@
 #!/bin/bash
-# Scripted E2E for the agentos CLI (task I1 done-when).
+# Scripted E2E for the curie CLI (task I1 done-when).
 #
 # Round-trips a synthetic event through a real local runner container with zero
 # Slack involved: init a bundle, start the runner (fake model, offline by
-# default; live model under AGENTOS_E2E_LIVE=1), send a message and stream the
+# default; live model under CURIE_E2E_LIVE=1), send a message and stream the
 # NDJSON reply, run the eval cases, stop. This is rung 1 (skill) of the
 # cold-start parity ladder (issue #690, cli/scripts/e2e-ladder.sh); the
 # ladder's local rung (`local deploy` -> `local message` with a real reply
 # assertion) covers deploying a bundle against a running platform API, so this
 # script no longer does so itself (issue #694).
 #
-# Requirements: docker, an agentos-runner image (build per runner/README.md),
-# and a cargo toolchain (or $AGENTOS_BIN). Run from anywhere:
+# Requirements: docker, a curie-runner image (build per runner/README.md),
+# and a cargo toolchain (or $CURIE_BIN). Run from anywhere:
 #
 #   bash cli/scripts/e2e.sh
 #
 # Env knobs:
-#   AGENTOS_E2E_IMAGE     runner image (default agentos-runner)
-#   AGENTOS_E2E_PORT      host port (default 7245)
-#   AGENTOS_E2E_NETWORK   docker network to join (e.g. agentos_default)
-#   AGENTOS_E2E_OTEL      OTLP endpoint (e.g. http://otel-collector:4318)
-#   AGENTOS_E2E_LIVE      1 = real model, requiring a credential in the
+#   CURIE_E2E_IMAGE     runner image (default curie-runner)
+#   CURIE_E2E_PORT      host port (default 7245)
+#   CURIE_E2E_NETWORK   docker network to join (e.g. curie_default)
+#   CURIE_E2E_OTEL      OTLP endpoint (e.g. http://otel-collector:4318)
+#   CURIE_E2E_LIVE      1 = real model, requiring a credential in the
 #                         environment (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN,
-#                         or AGENTOS_CREDENTIALS); default 0 runs the runner's
+#                         or CURIE_CREDENTIALS); default 0 runs the runner's
 #                         scripted fake model, offline and credential-free. This
 #                         is the SAME env var cli/scripts/e2e-ladder.sh sets for
 #                         its own local and cluster rungs, so a single
-#                         AGENTOS_E2E_LIVE=1 now runs every rung live.
-#   AGENTOS_BIN           path to a prebuilt agentos binary (skip cargo build)
+#                         CURIE_E2E_LIVE=1 now runs every rung live.
+#   CURIE_BIN           path to a prebuilt curie binary (skip cargo build)
 set -euo pipefail
 
 CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE="${AGENTOS_E2E_IMAGE:-agentos-runner}"
-PORT="${AGENTOS_E2E_PORT:-7245}"
-CONTAINER="agentos-e2e-runner"
-LIVE="${AGENTOS_E2E_LIVE:-0}"
+IMAGE="${CURIE_E2E_IMAGE:-curie-runner}"
+PORT="${CURIE_E2E_PORT:-7245}"
+CONTAINER="curie-e2e-runner"
+LIVE="${CURIE_E2E_LIVE:-0}"
 
-echo "=== Resolve the agentos binary ==="
-if [[ -n "${AGENTOS_BIN:-}" && -x "${AGENTOS_BIN:-}" ]]; then
+echo "=== Resolve the curie binary ==="
+if [[ -n "${CURIE_BIN:-}" && -x "${CURIE_BIN:-}" ]]; then
     # Absolutize: this script cd's into a scaffolded bundle directory before
-    # invoking the binary, so a relative $AGENTOS_BIN (as the ladder and CI
+    # invoking the binary, so a relative $CURIE_BIN (as the ladder and CI
     # pass) must be pinned to an absolute path here or it stops resolving
     # after the cd.
-    BIN="$(cd "$(dirname "$AGENTOS_BIN")" && pwd)/$(basename "$AGENTOS_BIN")"
+    BIN="$(cd "$(dirname "$CURIE_BIN")" && pwd)/$(basename "$CURIE_BIN")"
     echo "using prebuilt binary: $BIN"
 else
     (cd "$CLI_DIR" && cargo build --release --quiet)
-    BIN="$CLI_DIR/target/release/agentos"
+    BIN="$CLI_DIR/target/release/curie"
 fi
 "$BIN" --version
 
 echo
 echo "=== Resolve model mode ==="
 if [[ "$LIVE" == "1" ]]; then
-    if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${AGENTOS_CREDENTIALS:-}" ]]; then
-        echo "error: AGENTOS_E2E_LIVE=1 needs a model credential in the environment, and none is set." >&2
-        echo "fix: export ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or AGENTOS_CREDENTIALS, or drop AGENTOS_E2E_LIVE to run sealed against the fake model." >&2
+    if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${CURIE_CREDENTIALS:-}" ]]; then
+        echo "error: CURIE_E2E_LIVE=1 needs a model credential in the environment, and none is set." >&2
+        echo "fix: export ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or CURIE_CREDENTIALS, or drop CURIE_E2E_LIVE to run sealed against the fake model." >&2
         exit 1
     fi
     echo "model mode: LIVE (real model; \`skill up\` forwards the ambient credential)"
@@ -71,7 +71,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo
-echo "=== agentos init --from-spec (non-interactive, agent-authored spec) ==="
+echo "=== curie init --from-spec (non-interactive, agent-authored spec) ==="
 # AC #2: a coding agent writes a spec, the CLI scaffolds a runnable bundle from
 # it with zero prompts, and the spec-scaffolded evals/cases.json runs on the eval
 # path. The grader is falsifiable (it requires the agent to name itself), NOT
@@ -129,46 +129,46 @@ EOF
 
 echo
 if [[ "$LIVE" == "1" ]]; then
-    echo "=== agentos skill up (live model) ==="
+    echo "=== curie skill up (live model) ==="
 else
-    echo "=== agentos skill up (fake model, offline) ==="
+    echo "=== curie skill up (fake model, offline) ==="
 fi
 START_ARGS=(--plugin-dir . --image "$IMAGE" --port "$PORT" --name "$CONTAINER")
 if [[ "$LIVE" == "1" ]]; then
-    : # Real credential resolution (AGENTOS_CREDENTIALS, else the ambient SDK
+    : # Real credential resolution (CURIE_CREDENTIALS, else the ambient SDK
       # creds) happens inside `skill up` itself once --fake-model is omitted;
       # see commands::select_passthrough_env.
 else
     START_ARGS+=(--fake-model)
 fi
-if [[ -n "${AGENTOS_E2E_NETWORK:-}" ]]; then
-    START_ARGS+=(--network "$AGENTOS_E2E_NETWORK")
+if [[ -n "${CURIE_E2E_NETWORK:-}" ]]; then
+    START_ARGS+=(--network "$CURIE_E2E_NETWORK")
 fi
-if [[ -n "${AGENTOS_E2E_OTEL:-}" ]]; then
-    START_ARGS+=(--otel-endpoint "$AGENTOS_E2E_OTEL")
+if [[ -n "${CURIE_E2E_OTEL:-}" ]]; then
+    START_ARGS+=(--otel-endpoint "$CURIE_E2E_OTEL")
 fi
 "$BIN" skill up "${START_ARGS[@]}"
 
 echo
-echo "=== agentos skill status ==="
+echo "=== curie skill status ==="
 "$BIN" skill status
 
 echo
-echo "=== agentos skill message (synthetic event, streamed NDJSON reply) ==="
-"$BIN" skill message "@agentos can we approve the Meridian deal at 18% discount?"
+echo "=== curie skill message (synthetic event, streamed NDJSON reply) ==="
+"$BIN" skill message "@curie can we approve the Meridian deal at 18% discount?"
 
 echo
-echo "=== agentos skill eval (spec-scaffolded evals/cases.json) ==="
+echo "=== curie skill eval (spec-scaffolded evals/cases.json) ==="
 # No --cases: exercise the evals/cases.json the --from-spec scaffold wrote,
 # proving spec -> bundle -> skill eval passes end to end offline (AC #2).
 "$BIN" skill eval
 
 echo
-echo "=== agentos skill eval (explicit cases file) ==="
+echo "=== curie skill eval (explicit cases file) ==="
 "$BIN" skill eval --cases evals/e2e-cases.json
 
 echo
-echo "=== agentos skill down ==="
+echo "=== curie skill down ==="
 "$BIN" skill down
 
 echo

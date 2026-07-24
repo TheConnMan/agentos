@@ -10,7 +10,7 @@ shapes; the real propagation is exercised only against a live Langfuse.
 
 from typing import Any
 
-from agentos_api.langfuse import hoist_approval_decision
+from curie_api.langfuse import hoist_approval_decision
 
 
 def test_hoist_from_trace_metadata() -> None:

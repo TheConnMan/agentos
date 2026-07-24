@@ -17,7 +17,7 @@ function wiredValue(over: Record<string, unknown>): WiredData {
   return {
     wired: true,
     agents: [],
-    orgName: "AgentOS",
+    orgName: "Curie",
     loading: false,
     error: null,
     refetch: () => {},
@@ -50,8 +50,8 @@ describe("chrome workspace name", () => {
   });
 
   it("falls back to the default workspace name while config is unset", () => {
-    vi.mocked(useWired).mockReturnValue(wiredValue({ orgName: "AgentOS" }));
+    vi.mocked(useWired).mockReturnValue(wiredValue({ orgName: "Curie" }));
     renderChrome();
-    expect(screen.getAllByText("AgentOS").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Curie").length).toBeGreaterThanOrEqual(1);
   });
 });

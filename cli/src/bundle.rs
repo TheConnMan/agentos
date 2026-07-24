@@ -1,10 +1,10 @@
 //! Package a plugin bundle directory into a tar.gz archive for upload.
 //!
 //! The platform API (B2) accepts tar.gz/tar/zip, extracts, and validates via
-//! the frozen plugin-format package. Workstation state (`.agentos/`, `.git/`,
+//! the frozen plugin-format package. Workstation state (`.curie/`, `.git/`,
 //! virtualenvs, `node_modules`, tool caches) never belongs in an immutable
 //! bundle, so it is excluded here, and a bundle can declare its own exclusions
-//! in a root `.agentosignore` (see [`Exclusions::load`]).
+//! in a root `.curieignore` (see [`Exclusions::load`]).
 
 use std::path::{Component, Path, PathBuf};
 
@@ -13,13 +13,13 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 
 /// Name of the optional per-bundle ignore file, read from the bundle root.
-const IGNORE_FILE: &str = ".agentosignore";
+const IGNORE_FILE: &str = ".curieignore";
 
 /// Entry names never packed, matched against any file or directory with that
 /// name at any depth.
 const EXCLUDED_NAMES: &[&str] = &[
     IGNORE_FILE,
-    ".agentos",
+    ".curie",
     ".git",
     ".venv",
     "venv",
@@ -30,7 +30,7 @@ const EXCLUDED_NAMES: &[&str] = &[
 ];
 
 /// Entries the archive skips: the built-in names plus whatever the bundle's
-/// `.agentosignore` declares.
+/// `.curieignore` declares.
 struct Exclusions {
     /// Bare names, matched against any entry at any depth.
     names: Vec<String>,
@@ -39,7 +39,7 @@ struct Exclusions {
 }
 
 impl Exclusions {
-    /// Read `.agentosignore` from the bundle root, if present.
+    /// Read `.curieignore` from the bundle root, if present.
     ///
     /// One pattern per line, with `#` comments and blank lines skipped and
     /// surrounding whitespace plus a trailing `/` stripped. A pattern with no
@@ -48,7 +48,7 @@ impl Exclusions {
     /// bundle-root-relative path matching that exact entry and its subtree.
     /// There is no glob support, so an odd pattern simply never matches, and a
     /// pattern that could reach outside the bundle is dropped. The ignore file
-    /// is stat'd without following links, so a symlinked `.agentosignore` is
+    /// is stat'd without following links, so a symlinked `.curieignore` is
     /// refused rather than read from outside the bundle root.
     fn load(root: &Path) -> Result<Self> {
         let mut exclusions = Self {
@@ -180,8 +180,8 @@ mod tests {
     fn packs_the_bundle_and_excludes_workstation_state() {
         let dir = tempfile::tempdir().unwrap();
         crate::scaffold::scaffold(dir.path(), "deal-desk").unwrap();
-        std::fs::create_dir_all(dir.path().join(".agentos")).unwrap();
-        std::fs::write(dir.path().join(".agentos/runner.json"), "{}").unwrap();
+        std::fs::create_dir_all(dir.path().join(".curie")).unwrap();
+        std::fs::write(dir.path().join(".curie/runner.json"), "{}").unwrap();
         std::fs::create_dir_all(dir.path().join(".git")).unwrap();
         std::fs::write(dir.path().join(".git/HEAD"), "ref").unwrap();
 
@@ -189,7 +189,7 @@ mod tests {
         assert!(names.contains(&".claude-plugin/plugin.json".to_string()));
         assert!(names.contains(&"skills/deal-desk/SKILL.md".to_string()));
         assert!(names.contains(&".mcp.json".to_string()));
-        assert!(!names.iter().any(|n| n.starts_with(".agentos")));
+        assert!(!names.iter().any(|n| n.starts_with(".curie")));
         assert!(!names.iter().any(|n| n.starts_with(".git/")));
     }
 
@@ -284,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn honors_the_agentosignore_file_and_omits_it_from_the_archive() {
+    fn honors_the_curieignore_file_and_omits_it_from_the_archive() {
         let dir = tempfile::tempdir().unwrap();
         crate::scaffold::scaffold(dir.path(), "deal-desk").unwrap();
         std::fs::create_dir_all(dir.path().join("skills/deal-desk/fixtures")).unwrap();
@@ -293,7 +293,7 @@ mod tests {
         std::fs::write(dir.path().join("docs/notes.md"), "notes").unwrap();
         std::fs::write(dir.path().join("docs/keep.md"), "keep").unwrap();
         std::fs::write(
-            dir.path().join(".agentosignore"),
+            dir.path().join(".curieignore"),
             "# a comment\n\n  fixtures/  \ndocs/notes.md\n",
         )
         .unwrap();
@@ -305,17 +305,17 @@ mod tests {
             !names.iter().any(|n| n.contains("fixtures")),
             "bare-name pattern did not match at depth: {names:?}"
         );
-        assert!(!names.contains(&".agentosignore".to_string()), "{names:?}");
+        assert!(!names.contains(&".curieignore".to_string()), "{names:?}");
     }
 
     #[test]
-    fn ignores_agentosignore_patterns_that_reach_outside_the_bundle() {
+    fn ignores_curieignore_patterns_that_reach_outside_the_bundle() {
         let dir = tempfile::tempdir().unwrap();
         crate::scaffold::scaffold(dir.path(), "deal-desk").unwrap();
         std::fs::create_dir_all(dir.path().join("docs")).unwrap();
         std::fs::write(dir.path().join("docs/keep.md"), "keep").unwrap();
         std::fs::write(
-            dir.path().join(".agentosignore"),
+            dir.path().join(".curieignore"),
             "/etc/passwd\n../outside\n../../docs/keep.md\n./docs/keep.md\ndocs/notes.md\n",
         )
         .unwrap();
@@ -344,14 +344,14 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn refuses_an_agentosignore_that_is_a_symlink() {
+    fn refuses_an_curieignore_that_is_a_symlink() {
         let dir = tempfile::tempdir().unwrap();
         crate::scaffold::scaffold(dir.path(), "deal-desk").unwrap();
         let host = tempfile::tempdir().unwrap();
         std::fs::write(host.path().join("credentials"), "secret\n").unwrap();
         std::os::unix::fs::symlink(
             host.path().join("credentials"),
-            dir.path().join(".agentosignore"),
+            dir.path().join(".curieignore"),
         )
         .unwrap();
 

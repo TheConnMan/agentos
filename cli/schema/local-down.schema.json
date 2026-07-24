@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/local-down/v1.json",
-  "title": "agentos local down --json",
-  "description": "The agent-facing payload of `agentos local down`: the dry-run plan, an operator abort, or the stopped stack (whether volumes were wiped and how many stray runner containers were reaped).",
+  "$id": "https://schemas.curietech.ai/cli/local-down/v1.json",
+  "title": "curie local down --json",
+  "description": "The agent-facing payload of `curie local down`: the dry-run plan, an operator abort, or the stopped stack (whether volumes were wiped and how many stray runner containers were reaped).",
   "$defs": {
     "dryRun": {
       "type": "object",

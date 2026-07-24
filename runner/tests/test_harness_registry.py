@@ -6,15 +6,15 @@ from importlib.metadata import EntryPoint
 from typing import cast
 
 import pytest
-from agentos_runner import CLAUDE_READONLY_TOOLS
-from agentos_runner.harness.claude import CLAUDE_CONTRIBUTION
-from agentos_runner.harness.contribution import (
+from curie_runner import CLAUDE_READONLY_TOOLS
+from curie_runner.harness.claude import CLAUDE_CONTRIBUTION
+from curie_runner.harness.contribution import (
     AuthSpec,
     BundleCompileResult,
     HarnessContribution,
     InstallSpec,
 )
-from agentos_runner.harness.registry import (
+from curie_runner.harness.registry import (
     BUILTIN_HARNESS_CANONICAL_PATHS,
     ENTRY_POINT_GROUP,
     FlatHarnessPackageError,
@@ -29,7 +29,7 @@ from agentos_runner.harness.registry import (
 # entry point whose contribution must actually load needs a real importable
 # module. Alias this test module under a dotted name so the factories below
 # resolve, and so the value also satisfies the flat-package guard.
-_FAKE_MODULE = "agentos_runner_tests.harness_registry_fakes"
+_FAKE_MODULE = "curie_runner_tests.harness_registry_fakes"
 
 
 @pytest.fixture(autouse=True)
@@ -153,7 +153,7 @@ def test_builtin_name_collision_refused() -> None:
 
 def test_claudes_own_registration_is_not_flagged_as_collision() -> None:
     contributions = discover_contributions(
-        entry_points=[_entry_point("claude", "agentos_runner.harness.claude:get_contribution")]
+        entry_points=[_entry_point("claude", "curie_runner.harness.claude:get_contribution")]
     )
     assert contributions["claude"].name == "claude"
 
@@ -237,7 +237,7 @@ def test_contribution_aliasing_its_own_name_registers_cleanly() -> None:
 def test_benign_third_party_harness_is_registered_under_every_key() -> None:
     contributions = discover_contributions(
         entry_points=[
-            _entry_point("claude", "agentos_runner.harness.claude:get_contribution"),
+            _entry_point("claude", "curie_runner.harness.claude:get_contribution"),
             _entry_point("rival", f"{_FAKE_MODULE}:benign_third_party_contribution"),
         ]
     )
@@ -252,7 +252,7 @@ def test_benign_third_party_harness_is_registered_under_every_key() -> None:
 def test_builtin_canonical_paths_cover_every_key_the_builtin_claims() -> None:
     claimed = {CLAUDE_CONTRIBUTION.name, *CLAUDE_CONTRIBUTION.aliases}
     assert set(BUILTIN_HARNESS_CANONICAL_PATHS) == claimed
-    canonical = "agentos_runner.harness.claude:get_contribution"
+    canonical = "curie_runner.harness.claude:get_contribution"
     for key in claimed:
         assert BUILTIN_HARNESS_CANONICAL_PATHS[key] == canonical
 

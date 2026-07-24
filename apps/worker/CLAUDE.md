@@ -1,7 +1,7 @@
 # CLAUDE.md - apps/worker
 
 The concurrency kernel plus the Agent Sandbox substrate, and the F3 eval-stream
-runner (`agentos_worker.eval`), which runs eval suites off the `agentos:evals`
+runner (`curie_worker.eval`), which runs eval suites off the `curie:evals`
 stream against the frozen eval-case format (#8, ADR-0019). Full behavior spec
 lives in `apps/worker/README.md`; this file is the enforceable-rule summary. Read
 `../../ARCHITECTURE.md`'s message-flow diagram before changing `kernel.py`.
@@ -39,7 +39,7 @@ stop -- that is scope creep on the sacred module.
 ## Delivery is bounded (ADR-0039, #505)
 
 The reclaim loop is **not** infinite. An entry already delivered `max_delivery`
-times (`AGENTOS_MAX_DELIVERY`, default 5, floor 2) is dead-lettered to
+times (`CURIE_MAX_DELIVERY`, default 5, floor 2) is dead-lettered to
 `<stream>:dead` and acked off the group instead of re-dispatched. Unbounded
 reclaim let one permanently-failing entry starve the whole consumer group -- a
 silent total stall. Removing or bypassing the cap is that regression, not a
@@ -65,7 +65,7 @@ simplification.
   reply instead of dead-lettering. A configured default transport, or any
   non-resume turn, still raises and dead-letters normally.
 - **The graveyard has no consumer group, but it IS bounded** by an approximate
-  `MAXLEN` (`AGENTOS_DEAD_LETTER_MAXLEN`, default 10000) on every `XADD`. The
+  `MAXLEN` (`CURIE_DEAD_LETTER_MAXLEN`, default 10000) on every `XADD`. The
   unparseable path dead-letters per inbound entry, so an unbounded graveyard hands
   a wire-DTO drift a full-ingest-rate OOM against the same Valkey that holds the
   kernel's locks and markers. Rows are therefore **best-effort**: under a flood the
@@ -77,24 +77,24 @@ simplification.
   failures onto the stream they came from and hot-loops. Do not soften that
   validator into a warning.
 
-## The sandbox substrate (`agentos_worker.sandbox`)
+## The sandbox substrate (`curie_worker.sandbox`)
 
 - **The kernel talks in `thread_key` and `SandboxHandle` only.** Everything
   Kubernetes-shaped stays behind the `SandboxSubstrate`/`SandboxClient` seam
   -- never leak a K8s type across it into the kernel.
 - **`claim()` is claim-or-adopt.** A lost creation race deletes the loser's
-  claim; the route lives in Valkey (`agentos:sandbox:route:<thread_key>`)
+  claim; the route lives in Valkey (`curie:sandbox:route:<thread_key>`)
   with a TTL that `claim()`/`touch()` refresh.
 - **Claims carrying per-claim env (the resume path) cold-create** instead of
   binding the warm pool, because env cannot be injected into an
   already-running pod. Expected latency, not a bug.
 - **Suspend deletes the pod.** Never assume a suspended sandbox's process or
   prompt cache survives; a resumed or restarted sandbox rehydrates from external
-  state via `AGENTOS_HISTORY_REF`.
+  state via `CURIE_HISTORY_REF`.
 - **The client seam is sync; unit tests fake only `SandboxClient`** (the K8s
   control plane) -- Valkey is never mocked.
 - **The history ref is a deterministic state-store URL, not an SDK session id**
-  (ADR-0029). `binding.boot_env` sets `AGENTOS_HISTORY_REF` to this thread's
+  (ADR-0029). `binding.boot_env` sets `CURIE_HISTORY_REF` to this thread's
   transcript key on the durable state store (`.../state/transcript/<thread_key>`)
   on **every** claim, so a fresh, restarted, or resumed sandbox all boot with the
   same ref and the runner rehydrates the conversation as a preamble. There is no
@@ -105,7 +105,7 @@ simplification.
 
 `binding.py` resolves a thread's Slack channel to its agent, that agent's active
 deployment (prod outranks dev, then most recent), and the resolved
-`AGENTOS_BUNDLE_REF`, and injects it into the sandbox claim so the boot picks up
+`CURIE_BUNDLE_REF`, and injects it into the sandbox claim so the boot picks up
 the bundle version the API's git-flow engine produced. It is a read-only query
 layer over the shared Postgres tables (agents -> deployments -> agent_versions),
 deliberately not an import of the API package. The seam to remember: a thread
@@ -117,7 +117,7 @@ path here is still bound by the sacred-module rule above.
 
 ```bash
 uv run pytest apps/worker/tests/kernel -q     # real Valkey, fake K8s client, in-process fake runner, recording Slack sink
-uv run pytest apps/worker/tests/sandbox -q    # unit; AGENTOS_SANDBOX_E2E=1 additionally drives a real cluster
+uv run pytest apps/worker/tests/sandbox -q    # unit; CURIE_SANDBOX_E2E=1 additionally drives a real cluster
 ```
 
 Only Slack and the model behind the runner are faked in the kernel suite.

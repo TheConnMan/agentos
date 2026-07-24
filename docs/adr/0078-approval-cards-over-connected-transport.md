@@ -6,7 +6,7 @@ Status: Accepted
 
 ## Context
 
-ADR-0063 fixed the zero-Slack case of a `message`-driven approval: `agentos
+ADR-0063 fixed the zero-Slack case of a `message`-driven approval: `curie
 local/cluster message` keeps its in-process `SlackStub` alive across the
 approval-pending window and delivers the resumed reply on the same placeholder
 (#766/#772). That ADR's Decision was explicit that the stub is the reply
@@ -19,7 +19,7 @@ The deferral existed because the connected-transport path is a coordinated
 change across a sacred boundary, not a passenger on the offline fix:
 
 - **The requesting-channel card rides the trigger's transport.** In
-  `apps/worker/src/agentos_worker/kernel.py` the `in_requesting_channel` branch
+  `apps/worker/src/curie_worker/kernel.py` the `in_requesting_channel` branch
   posts the card over `qevent.reply_handle.endpoint` (the stub) when the card
   channel equals the requesting channel. This is a deliberate, test-pinned
   design from #451 (`apps/worker/tests/kernel/test_approval_lifecycle.py`,

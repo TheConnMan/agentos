@@ -1,7 +1,7 @@
 [project]
-name = "agentos-runner"
+name = "curie-runner"
 version = "0.0.0"
-description = "AgentOS runner: claude-agent-sdk streaming session server implementing the ACI v0.1 contract"
+description = "Curie runner: claude-agent-sdk streaming session server implementing the ACI v0.1 contract"
 requires-python = ">=3.13"
 dependencies = [
     "aci-protocol",
@@ -13,12 +13,12 @@ dependencies = [
     "anyio>=4.6",
 ]
 
-[project.entry-points."agentos.harness"]
-claude = "agentos_runner.harness.claude:get_contribution"
+[project.entry-points."curie.harness"]
+claude = "curie_runner.harness.claude:get_contribution"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentos_runner"]
+packages = ["src/curie_runner"]

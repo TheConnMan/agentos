@@ -13,9 +13,9 @@ from typing import Any
 
 import httpx
 import pytest
-from agentos_api.config import get_settings
-from agentos_worker.eval.models import EvalCaseResult, EvalOutcome, EvalRunResult
-from agentos_worker.eval.recorder import LangfuseEvalRecorder
+from curie_api.config import get_settings
+from curie_worker.eval.models import EvalCaseResult, EvalOutcome, EvalRunResult
+from curie_worker.eval.recorder import LangfuseEvalRecorder
 
 
 def _stack_up() -> bool:

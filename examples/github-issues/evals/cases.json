@@ -3,7 +3,7 @@
   "cases": [
     {
       "id": "reads-a-specific-issue-content",
-      "input": "In curie-eng/agentos, what is issue #7 about? Answer in one sentence.",
+      "input": "In curie-eng/curie, what is issue #7 about? Answer in one sentence.",
       "grader": {
         "kind": "contains",
         "expected": "aci-protocol",
@@ -13,7 +13,7 @@
     },
     {
       "id": "reads-a-specific-issue-state",
-      "input": "In curie-eng/agentos, is issue #7 open or closed? Answer with one word.",
+      "input": "In curie-eng/curie, is issue #7 open or closed? Answer with one word.",
       "grader": {
         "kind": "contains",
         "expected": "closed",
@@ -23,7 +23,7 @@
     },
     {
       "id": "lists-real-issue-numbers",
-      "input": "List a few open issues in curie-eng/agentos. Show each with its issue number in the form #<number>.",
+      "input": "List a few open issues in curie-eng/curie. Show each with its issue number in the form #<number>.",
       "grader": {
         "kind": "regex",
         "expected": "#\\d+",

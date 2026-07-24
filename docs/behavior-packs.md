@@ -27,7 +27,7 @@ which of the template's all-agent features do and do not fit it, and why.
 ## Why packs are declarative data, not code
 
 A pack is JSON on the agent's row: phrases, working lines, a reply string. The
-sampler and greeting matcher (`agentos_worker.behaviorpacks`) are platform-owned
+sampler and greeting matcher (`curie_worker.behaviorpacks`) are platform-owned
 and identical for every agent; only the data varies. This is deliberate: pack
 content never executes, so enabling a pack can never run an agent's code, and the
 sandbox-isolation guarantee holds without any pack crossing into the runner. If a
@@ -42,7 +42,7 @@ The substrate, end to end, minus the kernel call sites:
   (migration `0005`), validated by `schemas.BehaviorPacksConfig`, accepted on
   `POST /agents`, and read/written via `GET|PUT /agents/{id}/behavior-packs`
   (mirrors the budget control endpoints). NULL reads as all-off.
-- **Logic** (`apps/worker/src/agentos_worker/behaviorpacks.py::sample_load`): `sample_load(packs, seed)`,
+- **Logic** (`apps/worker/src/curie_worker/behaviorpacks.py::sample_load`): `sample_load(packs, seed)`,
   `sample_tip(packs, seed)`, `match_greeting(packs, text)`,
   `match_help(packs, text)`, plus the settings pack's `coerce_setting(setting,
   raw)` and `resolve_settings(packs, overrides)`. Pure stdlib, fully unit-tested.
@@ -53,7 +53,7 @@ The substrate, end to end, minus the kernel call sites:
   report") returns `None` and falls through to the model. `resolve_settings`
   layers a validated override over each declared default and ignores
   unknown/invalid keys, so a stale store can never break resolution.
-- **Binding** (`apps/worker/src/agentos_worker/binding.py::BindingResolver`, not the sacred kernel): the resolver
+- **Binding** (`apps/worker/src/curie_worker/binding.py::BindingResolver`, not the sacred kernel): the resolver
   now selects `behavior_packs`, carries it on `ResolvedDeployment`, and exposes
   `BindingResolver.packs_for(resolved) -> BehaviorPacks`.
 
@@ -73,7 +73,7 @@ additive and touches neither the kernel nor a frozen contract.
 
 ### The kernel wiring for tips/greeting/help (needs F1 review)
 
-These touches fire from inside `apps/worker/src/agentos_worker/kernel.py::Kernel`, which is the F1 "sacred"
+These touches fire from inside `apps/worker/src/curie_worker/kernel.py::Kernel`, which is the F1 "sacred"
 module: any change needs the escalated adversarial review (spec-vs-impl +
 side-effects-detective) per `apps/worker/CLAUDE.md`. The greeting short-circuit
 also brushes against kernel rule 3 ("the kernel never keyword-guesses intent"),
@@ -127,8 +127,8 @@ the CurieTech agent templates (`agent-ss-template`, `agent-mcp-template`,
 `agentkit`, and the newer batteries in `revenue-leak-agent`). The point of packs
 is the *declarative, per-agent, opt-in* subset. The table records where each
 battery lands, because "make everything a pack" is the wrong goal: a pack is data
-consumed by platform code, so a battery that is itself code, or that AgentOS
-already provides, or that needs a reply model AgentOS does not have, is not a
+consumed by platform code, so a battery that is itself code, or that Curie
+already provides, or that needs a reply model Curie does not have, is not a
 pack.
 
 | Battery | Disposition | Why |
@@ -138,13 +138,13 @@ pack.
 | Greeting detection | **Pack** (`greeting`) | Data (phrases + reply), deterministic pre-model matcher. Shipped. |
 | Help / "what can you do" | **Pack** (`help`) | Same shape as greeting; the niceties battery's help half. Shipped. |
 | Runtime settings / knobs | **Pack** (`settings`, schema) | The editable-settings allowlist is declarative; shipped with platform-owned validation (`coerce_setting`/`resolve_settings`). The durable override store + edit UI are a deferred runtime. |
-| Kill switch / control | **Already native** | AgentOS has it: `apps/worker/src/agentos_worker/killswitch.py::KillSwitch` + `Kernel` kill gate + the `/agents/{id}/kill` control endpoint. A pack would duplicate it. |
+| Kill switch / control | **Already native** | Curie has it: `apps/worker/src/curie_worker/killswitch.py::KillSwitch` + `Kernel` kill gate + the `/agents/{id}/kill` control endpoint. A pack would duplicate it. |
 | Activity log | **Already native (observability)** | Post-model observation is Langfuse tracing; the Slack "activity" ring buffer is stateful UI code, not declarative data. |
 | Logging setup | **Not per-agent** | Pure infra, identical for every agent; belongs to the platform, not a pack. |
-| Block Kit rendering | **Not applicable** | AgentOS streams text + `chat_update` mrkdwn; there is no structured `Reply` object to render. Would need a Block Kit reply model first. |
+| Block Kit rendering | **Not applicable** | Curie streams text + `chat_update` mrkdwn; there is no structured `Reply` object to render. Would need a Block Kit reply model first. |
 | Navigation (back/up) | **Pack** (`nav`) | The hub button is declarative (label + command); `ensure_hub_button` is the platform-owned no-dead-ends policy over a reply's buttons. Viable now that buttons render + respond; applying it during render is the deferred wiring. |
 | HTTP backoff, vision, polling-worker | **Runner/plugin code** | These are agentkit *libraries*. As packs they would run battery code in the worker, breaking sandbox isolation. They belong in the runner/plugin. |
-| Integrations (Jira/NetSuite/CPQ) | **MCP servers** | External-system connectors are the plugin's `.mcp.json` surface in AgentOS, not declarative UX data. |
+| Integrations (Jira/NetSuite/CPQ) | **MCP servers** | External-system connectors are the plugin's `.mcp.json` surface in Curie, not declarative UX data. |
 | Proactive notifier / digest | **Domain logic** | Revenue-leak's alerting policy; not a reusable battery. |
 
 The throughline: the moment a battery needs to *run agent-authored logic*, it

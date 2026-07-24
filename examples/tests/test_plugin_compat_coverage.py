@@ -1,4 +1,4 @@
-"""The plugin-compat gate must exercise all five AgentOS authoring extensions.
+"""The plugin-compat gate must exercise all five Curie authoring extensions.
 
 `scripts/check-plugin-compat.sh` runs `claude plugin validate` over every bundle
 under `examples/`, asserting our five extension fields (systemPrompt,
@@ -18,7 +18,7 @@ from pathlib import Path
 
 EXAMPLES = Path(__file__).resolve().parents[1]
 
-# The five AgentOS authoring extensions on the plugin manifest (plugin_format
+# The five Curie authoring extensions on the plugin manifest (plugin_format
 # models.py); each is unknown-to-Claude-Code by design and warned-and-ignored.
 _EXTENSION_FIELDS = (
     "systemPrompt",
@@ -48,7 +48,7 @@ def test_every_extension_field_is_exercised_by_some_bundle() -> None:
         if not any(field in manifest for manifest in manifests)
     ]
     assert not uncovered, (
-        "these AgentOS extension fields appear in NO example bundle, so the "
+        "these Curie extension fields appear in NO example bundle, so the "
         f"plugin-compat gate never exercises them: {uncovered}. Add them to the "
         "compat-fixture bundle (examples/compat-fixture/.claude-plugin/plugin.json)."
     )

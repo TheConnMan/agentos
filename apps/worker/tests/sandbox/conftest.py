@@ -15,16 +15,16 @@ from dataclasses import dataclass, field
 
 import pytest
 import redis
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     connect_or_skip,
 )
-from agentos_worker.sandbox import (
+from curie_worker.sandbox import (
     AffinityStore,
     ClaimView,
     SandboxView,
     SubstrateConfig,
 )
-from agentos_worker.sandbox.docker import DockerSandboxClient
+from curie_worker.sandbox.docker import DockerSandboxClient
 
 
 class _FakeBundleStore:
@@ -65,7 +65,7 @@ def redis_client() -> Iterator[redis.Redis]:
 def key_prefix(redis_client: redis.Redis) -> Iterator[str]:
     """Per-test-unique key prefix on the shared Valkey, cleaned up after."""
 
-    prefix = f"test:agentos:sandbox:{uuid.uuid4().hex}"
+    prefix = f"test:curie:sandbox:{uuid.uuid4().hex}"
     yield prefix
     keys = list(redis_client.scan_iter(match=f"{prefix}:*"))
     if keys:
@@ -136,7 +136,7 @@ class FakeSandboxClient:
         self.claims[name] = FakeClaim(
             name=name,
             env=dict(env or {}),
-            labels={"agentos.dev/managed-by": "agentos-sandbox-substrate", **(labels or {})},
+            labels={"curietech.ai/managed-by": "curie-sandbox-substrate", **(labels or {})},
             sandbox_name=sandbox_name,
             ready=self.bind_ready,
         )

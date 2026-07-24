@@ -16,17 +16,17 @@ from collections.abc import Callable
 
 import pytest
 import redis.asyncio as aredis
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     VALKEY_HOST as _VALKEY_HOST,
 )
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     VALKEY_PORT as _VALKEY_PORT,
 )
-from agentos_test_support.valkey import (
+from curie_test_support.valkey import (
     VALKEY_PW as _VALKEY_PW,
 )
-from agentos_worker import killswitch as killswitch_module
-from agentos_worker.killswitch import KILL_CHANNEL, KillSwitch, kill_key
+from curie_worker import killswitch as killswitch_module
+from curie_worker.killswitch import KILL_CHANNEL, KillSwitch, kill_key
 
 
 def _client() -> aredis.Redis:

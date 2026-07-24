@@ -1,7 +1,7 @@
 [project]
-name = "agentos-channel-protocol"
+name = "curie-channel-protocol"
 version = "0.1.0"
-description = "Rendering-neutral AgentOS channel message contract"
+description = "Rendering-neutral Curie channel message contract"
 requires-python = ">=3.13"
 dependencies = ["pydantic>=2.9"]
 

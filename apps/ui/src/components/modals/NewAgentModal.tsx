@@ -68,7 +68,7 @@ export function NewAgentModal() {
       // Store the trimmed ID: a copied ID with surrounding spaces would silently
       // drop every mention because the worker matches the channel value exactly.
       // Only send model when set, so the agent falls back to the platform
-      // default (AGENTOS_MODEL unset) rather than pinning an empty string.
+      // default (CURIE_MODEL unset) rather than pinning an empty string.
       const agent = await createAgent({
         name,
         slack_channel: channelValue,
@@ -182,7 +182,7 @@ export function NewAgentModal() {
             }}
           />
           <div style={{ fontSize: 11, color: C.muted, marginBottom: 20, lineHeight: 1.5 }}>
-            Optional. Sets <span style={{ fontFamily: C.mono }}>AGENTOS_MODEL</span> for this agent at boot. Leave blank
+            Optional. Sets <span style={{ fontFamily: C.mono }}>CURIE_MODEL</span> for this agent at boot. Leave blank
             to use the platform default model.
           </div>
           <label style={{ fontSize: 13, fontWeight: 500, display: "block", marginBottom: 8 }}>Template</label>

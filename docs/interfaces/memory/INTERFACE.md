@@ -10,9 +10,9 @@ order: 15
 
 # INTERFACE: Memory
 
-> Part of the AgentOS swappable-seam catalog — see the [seam index](../../interfaces.md).
+> Part of the Curie swappable-seam catalog — see the [seam index](../../interfaces.md).
 
-<!-- BEGIN GENERATED: header (agentos dev docs-lint) -->
+<!-- BEGIN GENERATED: header (curie dev docs-lint) -->
 > **Kind:** CLEAN &nbsp;·&nbsp; **Implementations today:** 1 loader (StateApiMemoryStore) &nbsp;·&nbsp; **Swap-readiness grade:** not separately graded
 <!-- END GENERATED: header -->
 
@@ -21,7 +21,7 @@ order: 15
 ## The black line
 
 The port is the `MemoryStore` `Protocol` in
-`runner/src/agentos_runner/memory.py` (issue #264, ADR-0025). Two methods:
+`runner/src/curie_runner/memory.py` (issue #264, ADR-0025). Two methods:
 
 ```python
 class MemoryStore(Protocol):
@@ -32,10 +32,10 @@ class MemoryStore(Protocol):
 A `MemoryRecord` is `content: str` plus a `Provenance`
 (`learned_from_session_id`, `source_trace_ids`, `recorded_at`) — the
 entry→source-traces link. `SessionConfig.memory_ref`
-(`packages/aci-protocol/src/aci_protocol/session.py::SessionConfig`, `AGENTOS_MEMORY_REF`) is
+(`packages/aci-protocol/src/aci_protocol/session.py::SessionConfig`, `CURIE_MEMORY_REF`) is
 resolved to a concrete `MemoryStore` at runner boot by `resolve_memory`. The
 frozen ACI field is unchanged; the state-API bearer is a runner-local knob
-(`AGENTOS_MEMORY_TOKEN`), not part of the frozen env.
+(`CURIE_MEMORY_TOKEN`), not part of the frozen env.
 
 ## Current contract
 
@@ -65,7 +65,7 @@ key. `NullMemoryStore` is the no-ref sink.
 ## Known leakage
 
 - **Scoped memory token (was: shared API key).** Earlier the state API's one
-  shared platform key was forwarded into the sandbox as `AGENTOS_MEMORY_TOKEN`,
+  shared platform key was forwarded into the sandbox as `CURIE_MEMORY_TOKEN`,
   granting that key's full scope. ADR-0033 (#410) closed that: the worker now
   mints a scoped, agent-bound, HMAC-signed `state` token per turn, accepted only
   by the state router and bound to this agent's namespace, so the sandbox
@@ -89,7 +89,7 @@ key. `NullMemoryStore` is the no-ref sink.
 
 ## Cross-links
 
-- **Epic(s):** [#28](https://github.com/curie-eng/agentos/issues/28) — the memory port, `AGENTOS_MEMORY_REF` resolution, provenance record shape
-- **Issue:** [#264](https://github.com/curie-eng/agentos/issues/264) — this first loader
+- **Epic(s):** [#28](https://github.com/curie-eng/curie/issues/28) — the memory port, `CURIE_MEMORY_REF` resolution, provenance record shape
+- **Issue:** [#264](https://github.com/curie-eng/curie/issues/264) — this first loader
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — memory is not one of the six swap-readiness Jobs; not separately graded
 - **ADR(s):** [ADR-0025](../../adr/0025-memory-port-and-first-loader.md) — the port + first loader; [ADR-0003](../../adr/0003-stateless-first-rehydrate-on-resume.md) — stateless-first; rehydrate on resume; externalize session state

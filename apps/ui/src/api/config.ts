@@ -4,7 +4,7 @@
 //
 //  - The API key comes from ?api_key=, else VITE_API_KEY, else the dev default.
 
-const DEV_API_KEY = "agentos-dev-key";
+const DEV_API_KEY = "curie-dev-key";
 
 function params(): URLSearchParams {
   if (typeof window === "undefined") return new URLSearchParams();
@@ -15,5 +15,5 @@ export function apiKey(): string {
   return params().get("api_key") || import.meta.env.VITE_API_KEY || DEV_API_KEY;
 }
 
-// Same-origin prefix; Vite's proxy forwards it to AGENTOS_API_TARGET.
+// Same-origin prefix; Vite's proxy forwards it to CURIE_API_TARGET.
 export const API_PREFIX = "/api";

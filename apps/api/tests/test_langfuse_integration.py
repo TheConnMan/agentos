@@ -10,8 +10,8 @@ from typing import Any
 
 import httpx
 import pytest
-from agentos_api.config import get_settings
-from agentos_api.main import create_app
+from curie_api.config import get_settings
+from curie_api.main import create_app
 from fastapi.testclient import TestClient
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource

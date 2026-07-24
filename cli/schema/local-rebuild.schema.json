@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.agentos.dev/cli/local-rebuild/v1.json",
-  "title": "agentos local rebuild --json",
-  "description": "The agent-facing payload of `agentos local rebuild`: the dry-run plan, or which service was rebuilt and which model mode it came back up running.",
+  "$id": "https://schemas.curietech.ai/cli/local-rebuild/v1.json",
+  "title": "curie local rebuild --json",
+  "description": "The agent-facing payload of `curie local rebuild`: the dry-run plan, or which service was rebuilt and which model mode it came back up running.",
   "$defs": {
     "dryRun": {
       "type": "object",

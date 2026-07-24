@@ -2,20 +2,20 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=AGENTOS_BUILD_CHANNEL");
-    let channel = std::env::var("AGENTOS_BUILD_CHANNEL").unwrap_or_else(|_| "dev".to_string());
+    println!("cargo:rerun-if-env-changed=CURIE_BUILD_CHANNEL");
+    let channel = std::env::var("CURIE_BUILD_CHANNEL").unwrap_or_else(|_| "dev".to_string());
     match channel.as_str() {
         "release" | "dev" => {}
-        other => panic!("AGENTOS_BUILD_CHANNEL must be `release` or `dev`, got `{other}`"),
+        other => panic!("CURIE_BUILD_CHANNEL must be `release` or `dev`, got `{other}`"),
     }
-    println!("cargo:rustc-env=AGENTOS_BUILD_CHANNEL={channel}");
+    println!("cargo:rustc-env=CURIE_BUILD_CHANNEL={channel}");
 
     embed_result_schemas();
 }
 
 /// Embed every committed CLI result JSON Schema (issue #634) into the binary so a
-/// released `agentos` ships its schemas and can print them on demand
-/// (`agentos schema-index [NAME]`) with no source checkout. The generated table
+/// released `curie` ships its schemas and can print them on demand
+/// (`curie schema-index [NAME]`) with no source checkout. The generated table
 /// is `(short_name, filename, contents)` rows plus the index; it is derived from
 /// whatever `.schema.json` files sit in `cli/schema/`, so adding a schema needs
 /// no edit here. The inventory contract test keeps that directory in lockstep

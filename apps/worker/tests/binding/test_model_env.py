@@ -1,7 +1,7 @@
 """The runner model + credentials passthrough layered onto every boot env.
 
 Pure unit tests (no DB / Valkey): both the runs binding and the eval consumer
-must forward AGENTOS_FAKE_MODEL and AGENTOS_CREDENTIALS from the worker config
+must forward CURIE_FAKE_MODEL and CURIE_CREDENTIALS from the worker config
 into the sandbox boot env, and must omit them when the config leaves them unset.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from agentos_worker.binding import (
+from curie_worker.binding import (
     APPROVAL_REQUIRED_ENV,
     BASE_URL_ENV,
     CREDENTIALS_ENV,
@@ -20,9 +20,9 @@ from agentos_worker.binding import (
     ResolvedDeployment,
     apply_model_env,
 )
-from agentos_worker.config import WorkerConfig
-from agentos_worker.eval.stream import EvalJob, EvalStreamConsumer
-from agentos_worker.sandbox_token import verify
+from curie_worker.config import WorkerConfig
+from curie_worker.eval.stream import EvalJob, EvalStreamConsumer
+from curie_worker.sandbox_token import verify
 
 
 def _resolved(model: str | None = None) -> ResolvedDeployment:
@@ -63,7 +63,7 @@ def test_apply_model_env_leaves_sdk_creds_absent_without_credentials() -> None:
 def test_apply_model_env_forwards_base_url_and_model_without_fake_flag() -> None:
     base_url_env, model_env = BASE_URL_ENV, MODEL_ENV
     assert base_url_env == "ANTHROPIC_BASE_URL"
-    assert model_env == "AGENTOS_MODEL"
+    assert model_env == "CURIE_MODEL"
 
     env: dict[str, str] = {}
     apply_model_env(
@@ -105,8 +105,8 @@ def test_apply_model_env_omits_base_url_and_model_by_default() -> None:
 
 
 def test_worker_config_reads_local_model_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENTOS_MODEL_BASE_URL", "http://x:1")
-    monkeypatch.setenv("AGENTOS_MODEL", "qwen3:4b")
+    monkeypatch.setenv("CURIE_MODEL_BASE_URL", "http://x:1")
+    monkeypatch.setenv("CURIE_MODEL", "qwen3:4b")
     config = WorkerConfig()
 
     assert config.model_base_url == "http://x:1"
@@ -192,8 +192,8 @@ def test_binding_boot_env_forwards_per_agent_model() -> None:
 
 # --- Operator-scoped model wire declaration (#514) -----------------------------
 #
-# The runner reads AGENTOS_MODEL_API_BACKEND (the endpoint's wire protocol) and
-# AGENTOS_MODEL_ENV_KEY (which env var carries the credential). The runner boot
+# The runner reads CURIE_MODEL_API_BACKEND (the endpoint's wire protocol) and
+# CURIE_MODEL_ENV_KEY (which env var carries the credential). The runner boot
 # env is closed-world -- only what apply_model_env emits is there -- so without a
 # producer here both vars are unreachable and the feature is dead config. Both
 # mirror model_base_url's chain exactly: WorkerConfig field -> apply_model_env ->
@@ -202,14 +202,14 @@ def test_binding_boot_env_forwards_per_agent_model() -> None:
 # The env-var names are the cross-package contract with the runner; asserted by
 # their literal strings so this file never depends on a constant that only exists
 # after the feature lands (which would break collection of the whole module).
-API_BACKEND_ENV = "AGENTOS_MODEL_API_BACKEND"
-MODEL_ENV_KEY_ENV = "AGENTOS_MODEL_ENV_KEY"
+API_BACKEND_ENV = "CURIE_MODEL_API_BACKEND"
+MODEL_ENV_KEY_ENV = "CURIE_MODEL_ENV_KEY"
 
 
 def test_binding_exports_the_new_model_env_constants() -> None:
     # The emission sites must go through module constants, like BASE_URL_ENV does,
     # rather than inline literals scattered across the two lanes.
-    from agentos_worker import binding
+    from curie_worker import binding
 
     assert binding.API_BACKEND_ENV == API_BACKEND_ENV
     assert binding.MODEL_ENV_KEY_ENV == MODEL_ENV_KEY_ENV
@@ -316,7 +316,7 @@ def test_eval_boot_env_carries_api_backend_and_env_key() -> None:
 # --- Operator scope is the security property, not a style choice (#514) --------
 #
 # Both vars are OPERATOR scope: they come from WorkerConfig and NEVER from the
-# per-agent row. AGENTOS_MODEL is per-agent (#254) precisely because a model id is
+# per-agent row. CURIE_MODEL is per-agent (#254) precisely because a model id is
 # inert. These two are not: model_env_key names which env var the runner reads a
 # credential OUT of, and it is read from the same boot env that holds the scoped
 # state tokens (ADR-0033) and the agent's connector secrets. A per-agent override
@@ -370,7 +370,7 @@ def test_binding_boot_env_api_backend_is_not_overridable_per_agent() -> None:
 # The env-var name is the cross-package contract with the runner; asserted by its
 # literal string so this test file never depends on a constant that only exists
 # after the feature lands (which would break collection of the whole module).
-RUNNER_TOKEN_ENV = "AGENTOS_RUNNER_TOKEN"
+RUNNER_TOKEN_ENV = "CURIE_RUNNER_TOKEN"
 
 
 def test_binding_boot_env_mints_runner_token() -> None:
@@ -392,7 +392,7 @@ def test_binding_boot_env_token_is_unique_per_claim() -> None:
 
 def test_binding_boot_env_token_survives_credentials() -> None:
     # Regression guard on the PR #109 apply_model_env credential pop: it strips
-    # ambient SDK creds when AGENTOS_CREDENTIALS is set, but must not eat the
+    # ambient SDK creds when CURIE_CREDENTIALS is set, but must not eat the
     # runner token (which is not a model credential).
     resolver = BindingResolver.__new__(BindingResolver)
     resolver._config = WorkerConfig(fake_model=True, credentials="cred-1")  # type: ignore[attr-defined]
@@ -406,8 +406,8 @@ def test_binding_boot_env_token_survives_credentials() -> None:
 # The env-var names are the cross-package contract with the runner; asserted by
 # their literal strings so this file never depends on a constant that only exists
 # after the feature lands.
-HISTORY_REF_ENV = "AGENTOS_HISTORY_REF"
-HISTORY_TOKEN_ENV = "AGENTOS_HISTORY_TOKEN"
+HISTORY_REF_ENV = "CURIE_HISTORY_REF"
+HISTORY_TOKEN_ENV = "CURIE_HISTORY_TOKEN"
 
 
 def test_binding_boot_env_sets_per_thread_transcript_ref() -> None:
@@ -481,7 +481,7 @@ def test_binding_boot_env_carries_approval_required_tools() -> None:
 
 # --- Opt-in false-completion check (#517, #669) --------------------------------
 #
-# The runner (runner/src/agentos_runner/config.py) reads AGENTOS_FALSE_COMPLETION_
+# The runner (runner/src/curie_runner/config.py) reads CURIE_FALSE_COMPLETION_
 # CHECK directly (never through the frozen BootEnv contract, since the check is
 # observe-only and authority-free). Before #669 nothing set that var in any
 # deployed compose/k8s sandbox, so the #588 check was unreachable outside a
@@ -489,14 +489,14 @@ def test_binding_boot_env_carries_approval_required_tools() -> None:
 # (#514): WorkerConfig field -> boot env, emitted only when truthy, operator scope
 # only (no per-agent override), and both the runs binding and the eval lane must
 # agree.
-FALSE_COMPLETION_CHECK_ENV = "AGENTOS_FALSE_COMPLETION_CHECK"
+FALSE_COMPLETION_CHECK_ENV = "CURIE_FALSE_COMPLETION_CHECK"
 
 
 def test_worker_config_reads_false_completion_check_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert WorkerConfig().false_completion_check is False
-    monkeypatch.setenv("AGENTOS_FALSE_COMPLETION_CHECK", "1")
+    monkeypatch.setenv("CURIE_FALSE_COMPLETION_CHECK", "1")
     assert WorkerConfig().false_completion_check is True
 
 

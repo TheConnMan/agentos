@@ -8,9 +8,9 @@ anonymization/extraction helpers.
 from typing import Any
 
 import pytest
-from agentos_api.deps import get_langfuse
-from agentos_api.evalcase import extract_io, redact, trace_to_eval_case
-from agentos_api.main import create_app
+from curie_api.deps import get_langfuse
+from curie_api.evalcase import extract_io, redact, trace_to_eval_case
+from curie_api.main import create_app
 from fastapi.testclient import TestClient
 
 
@@ -41,7 +41,7 @@ def _app_with(
 
 def test_promote_emits_runnable_anonymized_case(auth_headers: dict[str, str]) -> None:
     trace = {
-        "name": "agentos-run:agent-x",
+        "name": "curie-run:agent-x",
         "input": [{"role": "user", "content": "Email me at jane.doe@acme.com about U012ABCDEF"}],
         "output": "Sure, I sent the summary to your address.\nMore detail below.",
     }

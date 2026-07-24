@@ -13,11 +13,11 @@ boundary this ADR reuses (`Failure`, exit 1) and
 [ADR-0053](0053-expected-terminal-status-in-eval-cases.md) for the completion
 gate (`expect_status`) this decision reads without changing.
 
-Closes [#622](https://github.com/curie-eng/agentos/issues/622), the fourth
-acceptance criterion of [#526](https://github.com/curie-eng/agentos/issues/526)
+Closes [#622](https://github.com/curie-eng/curie/issues/622), the fourth
+acceptance criterion of [#526](https://github.com/curie-eng/curie/issues/526)
 ("a model that is not resolvable fails loudly rather than silently landing in
 the matrix's unlabelled column") that #526's closing commit did not actually
-implement. Related to [#606](https://github.com/curie-eng/agentos/issues/606)
+implement. Related to [#606](https://github.com/curie-eng/curie/issues/606)
 (a sealed sweep labelling fake rows with real model names) as the same family of
 defect — a sweep reporting a comparison it did not perform — but not settled
 together: #606 is the fake tier mislabelling a row; this is a real tier never
@@ -25,7 +25,7 @@ producing one.
 
 ## Context
 
-`agentos <skill|local|cluster> eval --model` runs an eval suite once per named
+`curie <skill|local|cluster> eval --model` runs an eval suite once per named
 model and reports a pass-rate per model (#526) so an operator can decide "can we
 move this skill to a cheaper model." There was no validation anywhere in the
 repo of whether a `--model` value names a model that actually resolves — and
@@ -36,7 +36,7 @@ from a typo'd one **using signal it already has**, not an allowlist.
 
 Traced for `--model bogus-model-xyz`: the runner boots and passes its health
 check (health never calls the model), so `wait_healthy` sees nothing wrong. The
-first turn then hits the SDK's model error, which `runner/src/agentos_runner/session.py`
+first turn then hits the SDK's model error, which `runner/src/curie_runner/session.py`
 converts to a classified-failure `Final` **by design** — the ACI stream must
 always terminate in a final, so a raised SDK/transport error becomes a
 classified failure rather than a truncated, final-less stream. That design is
@@ -51,7 +51,7 @@ model that legitimately scored zero.
 
 At local/cluster the failure mode was worse, not better: it was a misleading
 20-interval timeout ("Check the worker eval consumer is running"). The
-platform's eval-stream consumer (`apps/worker/src/agentos_worker/eval/stream.py`,
+platform's eval-stream consumer (`apps/worker/src/curie_worker/eval/stream.py`,
 `_acquire_target`) provisions a fresh sandbox per triggered model; when
 provisioning itself fails (an unbootable or unregistered id, a bad credential),
 `_run_and_report` takes the `_report_failed` branch with an **empty** results
@@ -86,7 +86,7 @@ computed:
   trace metadata precisely when the turn did not complete (a classified
   failure, the wrong terminal status, or a transport/runner exception),
   reserved and left empty for a turn that completed and simply lost on the
-  grader (`EvalCaseResult.error`, unchanged by this ADR). `apps/api/src/agentos_api/evals.py`
+  grader (`EvalCaseResult.error`, unchanged by this ADR). `apps/api/src/curie_api/evals.py`
   reads that pre-existing field to add a `completed` count to
   `EvalModelSummary`/the eval matrix API — no new instrumentation in the
   worker, only a new aggregate over data it already recorded.
@@ -147,7 +147,7 @@ BYO model (#24) with no knowledge of what ids are valid.
   exits 1**, at all three tiers, for that specific case only (`total > 0`,
   `completed == 0` for at least one row). Any other sweep result — including a
   real 0% — is unaffected.
-- **`EvalModelSummary` (`apps/api/src/agentos_api/schemas.py`,
+- **`EvalModelSummary` (`apps/api/src/curie_api/schemas.py`,
   `cli/src/api.rs`) gains a `completed: int = 0` field**, backward-compatible
   under `#[serde(default)]`/a Pydantic default the same way `plumbing` already
   is; an API that predates the field reads as `completed = 0` for every row,

@@ -17,10 +17,10 @@ the frozen eval-**case** format this ADR does not touch.
 
 ## Context
 
-The runner ships a fake model (`runner/src/agentos_runner/fake.py`) so the
-authoring loop runs offline with no credential: `agentos skill up --fake-model`
+The runner ships a fake model (`runner/src/curie_runner/fake.py`) so the
+authoring loop runs offline with no credential: `curie skill up --fake-model`
 is the fastest rung on the parity ladder, and it is the default in CI, in the
-chart's sealed pool, and in compose (`${AGENTOS_FAKE_MODEL:-1}`). The fake is a
+chart's sealed pool, and in compose (`${CURIE_FAKE_MODEL:-1}`). The fake is a
 mock **at the adapter seam**: everything above it — translation, budget,
 side-effect flagging, status, NDJSON, HTTP, the approval lifecycle — runs
 unmodified. Its `default_turn()` returns one canned script whatever the input:
@@ -28,20 +28,20 @@ a text delta, a `Bash` tool note, and a final frame whose text is `all done`.
 
 Two defects, filed separately, turned out to be one decision seen from two sides.
 
-**[#612](https://github.com/curie-eng/agentos/issues/612): the documented
-onboarding loop was red.** [#527](https://github.com/curie-eng/agentos/issues/527)
+**[#612](https://github.com/curie-eng/curie/issues/612): the documented
+onboarding loop was red.** [#527](https://github.com/curie-eng/curie/issues/527)
 correctly removed the scaffold's vacuous `contains ""` grader (it passed on any
 output, including an empty or errored turn) and
-[#553](https://github.com/curie-eng/agentos/issues/553) replaced it with a
+[#553](https://github.com/curie-eng/curie/issues/553) replaced it with a
 falsifiable `contains: <name>` — the agent must name itself. But the canned reply
 `all done` does not contain the bundle name, so `init` -> `skill up --fake-model`
 -> `skill eval`, the loop the product's own guide documents, failed on an
 untouched scaffold. CI missed it because `cli/scripts/e2e.sh` wrote its own
 `cases.json` with a grader tuned to match the fake's canned text.
 
-**[#606](https://github.com/curie-eng/agentos/issues/606): fake runs were landing
+**[#606](https://github.com/curie-eng/curie/issues/606): fake runs were landing
 in the matrix labelled with real model names.**
-[#526](https://github.com/curie-eng/agentos/issues/526) gave `local eval` and
+[#526](https://github.com/curie-eng/curie/issues/526) gave `local eval` and
 `cluster eval` a `--model` sweep so an operator could answer "can we move this
 skill to a cheaper model", and `_eval_model` tagged each matrix cell with the
 requested model. On a fake stack no model is ever called, so a sweep of N models
@@ -120,7 +120,7 @@ to post a `0/N` false red or an `N/N` false green; a fake run containing a real
 A sweep against a canned reply compares one string to itself, so the CLI refuses
 it at the single `message::eval` seam both `local eval` and `cluster eval` funnel
 through, with a message naming the reason and a fix naming the remedy
-(`AGENTOS_CREDENTIALS` locally, `--set agentSandbox.runner.fakeModel=false` on
+(`CURIE_CREDENTIALS` locally, `--set agentSandbox.runner.fakeModel=false` on
 cluster).
 
 **Exit 2, not 4, and the distinction is the whole of ADR-0041's boundary.** Exit
@@ -135,7 +135,7 @@ is the documented onboarding loop, and it claims nothing about any model.
 
 ### The worker is the sole authority on fake-ness
 
-`AGENTOS_FAKE_MODEL` is set on the worker only, and the worker is the only
+`CURIE_FAKE_MODEL` is set on the worker only, and the worker is the only
 component that both knows fake-ness and sits upstream of grading. Two
 consequences.
 
@@ -146,7 +146,7 @@ the worker already holds locally. The worker's `_eval_model` returning the
 `fake-model` sentinel (never `item.model`) is the actual #606 invariant, and it
 holds for every caller of the eval plane, not just the CLI.
 
-**The API is not taught `AGENTOS_FAKE_MODEL`.** A second copy of the config would
+**The API is not taught `CURIE_FAKE_MODEL`.** A second copy of the config would
 drift from the truth, and it could not reproduce the chart's composite
 (`fakeModel AND NOT inference.deploy`) anyway — an `inference.deploy` install
 with `fakeModel=true` is a *real* install. The CLI's refusal is UX, not the
@@ -166,7 +166,7 @@ summary row — which is honest, because one thing ran.
 ## Consequences
 
 **Every default `local eval --model` sweep now refuses**, because compose
-defaults to `AGENTOS_FAKE_MODEL=1`. This is a visible behavior change for anyone
+defaults to `CURIE_FAKE_MODEL=1`. This is a visible behavior change for anyone
 who was reading those numbers — but those numbers were fabricated, which is the
 point. The refusal message carries the fix, so it should read as a remedy rather
 than a regression.
@@ -193,9 +193,9 @@ here, since no in-tree consumer deserializes `passed` across a typed boundary,
 and a loud failure on `null` is the ADR-0041-preferred outcome versus silently
 ingesting a fabricated `false`.
 
-**Not decided here.** The eval-case *content* ([#619](https://github.com/curie-eng/agentos/issues/619),
-[#620](https://github.com/curie-eng/agentos/issues/620)), the tool-call grader
-([#621](https://github.com/curie-eng/agentos/issues/621)), and unresolvable-model
-validation ([#622](https://github.com/curie-eng/agentos/issues/622)). No
+**Not decided here.** The eval-case *content* ([#619](https://github.com/curie-eng/curie/issues/619),
+[#620](https://github.com/curie-eng/curie/issues/620)), the tool-call grader
+([#621](https://github.com/curie-eng/curie/issues/621)), and unresolvable-model
+validation ([#622](https://github.com/curie-eng/curie/issues/622)). No
 `GraderKind` is added: `plumbing_ok` is a *result* shape, not a *case* shape, so
 ADR-0019's frozen case format is untouched.

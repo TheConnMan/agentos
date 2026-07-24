@@ -1,13 +1,13 @@
 # Design pass: multi-dev workflow against a shared running cluster
 
 > Status: **Design / research pass** for epic
-> [#44](https://github.com/curie-eng/agentos/issues/44). Resolves the epic's
+> [#44](https://github.com/curie-eng/curie/issues/44). Resolves the epic's
 > deferred open questions on **isolation, targeting, and context**, and drafts the
 > concrete follow-up issues the design implies. No implementation is committed in
 > this doc.
 >
-> Related: [#40](https://github.com/curie-eng/agentos/issues/40) (target-noun CLI
-> surface, the `agentos context use ...` future-work note lives here),
+> Related: [#40](https://github.com/curie-eng/curie/issues/40) (target-noun CLI
+> surface, the `curie context use ...` future-work note lives here),
 > [ADR-0008](../adr/0008-multi-tenancy.md) (multi-tenancy: pooled RLS +
 > hard-siloed compute), [ADR-0023](../adr/0023-controller-networkpolicy-rbac-cluster-read-namespace-mutate.md)
 > (controller RBAC boundary), [ADR-0028](../adr/0028-substrate-is-resilience-fallback-not-product-swap-axis.md)
@@ -25,7 +25,7 @@ time**.
 
 The single-operator assumptions that break at team scale, grounded in the code:
 
-- **`agentos cluster message` self-plumbs cluster-wide.** It opens its own
+- **`curie cluster message` self-plumbs cluster-wide.** It opens its own
   `kubectl port-forward`s and, to wire a Slack stub, sets `worker.slackApiBaseUrl`
   via a `helm upgrade --reuse-values` that is **release-wide** — it re-points *the*
   worker's outbound Slack for everyone. It already guards against hijacking a live
@@ -80,8 +80,8 @@ that ADR-0008's tenant work can later subsume rather than contradict: a `dev`/
   *connects* to it, they do not `helm install` their own.
 - **Per-dev:** an **agent deployment** (an `agents` row + `agent_version` +
   `deployment`, and the runner sandboxes it claims at run time). A dev's loop is
-  `agentos cluster deploy` of their bundle against the shared release, then
-  `agentos cluster message --agent <name>` to drive it — never `cluster up`.
+  `curie cluster deploy` of their bundle against the shared release, then
+  `curie cluster message --agent <name>` to drive it — never `cluster up`.
 
 So the command surface shifts from "each dev installs and operates a release" to
 "an admin operates one release; devs deploy and drive agents on it." `cluster up`/
@@ -100,7 +100,7 @@ per-dev runtime namespaces for compute and a single shared ingress for exposure.
   `owner` prefix by convention. Recommend (a) with an explicit `owner` column so
   targeting is exact, not a string-prefix guess.
 - **Compute isolation.** Reuse the ADR-0008 primitive: **namespace-per-owner** for
-  the runner sandboxes (`agentos-run-<owner>`), so one dev's sandboxes, quotas,
+  the runner sandboxes (`curie-run-<owner>`), so one dev's sandboxes, quotas,
   and NetworkPolicies never touch another's. The controller's
   cluster-read/namespace-mutate RBAC boundary (ADR-0023) already supports mutating
   within a runtime namespace while reading cluster-wide, so this is an extension
@@ -154,16 +154,16 @@ construction. Two changes:
 install.** A dev should never `helm install` to drive an agent on a shared
 cluster. Introduce a **connect** step that records "which cluster + which release
 + which owner I am" (see Q5) and gates the per-dev verbs, while `cluster up`/`down`
-stay admin/CI verbs that a dev's scoped role cannot run. Practically: `agentos
+stay admin/CI verbs that a dev's scoped role cannot run. Practically: `curie
 context use <cluster>/<release>` (Q5) *is* the connect step; after it, `deploy`/
 `message`/`status` operate against that release without any install.
 
-### Q5. Does this want an ambient context selector (`agentos context use ...`)?
+### Q5. Does this want an ambient context selector (`curie context use ...`)?
 
 **Recommendation: yes — an ambient context is the right substrate for multi-dev,
 and it is the natural home for "which cluster / which release / which owner."**
 
-- Introduce `agentos context` (the future work already noted on #40): `context
+- Introduce `curie context` (the future work already noted on #40): `context
   use <name>`, `context list`, `context show`. A context binds `{ kube-context,
   namespace, release, owner, api endpoint, api key ref }`.
 - The per-dev verbs (`deploy`, `message`, `status`) read the active context
@@ -203,7 +203,7 @@ admin, not per dev.**
 | Reply routing | release-wide `worker.slackApiBaseUrl` via `helm upgrade` | **per-agent routing on the turn/deployment**; direct-enqueue default |
 | Compute isolation | one runtime namespace | **namespace-per-owner** (reuses ADR-0008/0023) |
 | Exposure | per-release NodePort | **one shared LoadBalancer/ingress**, host/path-routed |
-| "Which cluster/release" | flags per call | **`agentos context use`** ambient selector |
+| "Which cluster/release" | flags per call | **`curie context use`** ambient selector |
 | Dev RBAC | full operator | **scoped role**: deploy/message yes, `helm upgrade` no |
 
 ## Proposed follow-up implementation issues
@@ -212,7 +212,7 @@ The design implies these concrete, independently-shippable issues (to be filed
 under epic #44). Listed here as the design's decomposition; ordered roughly by
 dependency.
 
-1. **`agentos context` ambient selector.** `context use/list/show` binding
+1. **`curie context` ambient selector.** `context use/list/show` binding
    `{kube-context, namespace, release, owner, api endpoint, api-key ref}`; the
    per-dev verbs read it; destructive/admin verbs echo the resolved target and
    require `--yes`. (Foundational — Q4/Q5.)
@@ -226,7 +226,7 @@ dependency.
    escape hatch. (Q3 — the load-bearing one.)
 4. **`owner` scope on agents + namespace-per-owner runtime isolation.** Add an
    `owner` column, scope uniqueness to `(owner, name)`, and run each owner's
-   sandboxes in `agentos-run-<owner>`; extend controller RBAC (ADR-0023) to the
+   sandboxes in `curie-run-<owner>`; extend controller RBAC (ADR-0023) to the
    per-owner namespaces. (Q2 — precursor to ADR-0008 `tenant_id`.)
 5. **Per-dev scoped RBAC role / kubeconfig.** A role that permits deploy/message
    against the shared release and the dev's runtime namespace but **not** `helm

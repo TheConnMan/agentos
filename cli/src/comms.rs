@@ -1,4 +1,4 @@
-//! `agentos cluster comms`: wire or clear the cluster's real Slack surface
+//! `curie cluster comms`: wire or clear the cluster's real Slack surface
 //! with one `helm upgrade --reuse-values`, keeping the chart as the source of
 //! truth.
 
@@ -95,8 +95,8 @@ pub fn local_connect_commands(o: &LocalCommsOpts) -> Vec<OpsCommand> {
             plain("up"),
             plain("-d"),
             plain("--wait"),
-            plain("agentos-worker"),
-            plain("agentos-dispatcher"),
+            plain("curie-worker"),
+            plain("curie-dispatcher"),
         ],
     )
     .with_env(env)
@@ -125,7 +125,7 @@ pub fn local_disconnect_commands(o: &LocalCommsOpts) -> Vec<OpsCommand> {
                 plain("-f"),
                 plain(&o.file),
                 plain("stop"),
-                plain("agentos-dispatcher"),
+                plain("curie-dispatcher"),
             ],
         ),
         OpsCommand::new(
@@ -139,7 +139,7 @@ pub fn local_disconnect_commands(o: &LocalCommsOpts) -> Vec<OpsCommand> {
                 plain("up"),
                 plain("-d"),
                 plain("--wait"),
-                plain("agentos-worker"),
+                plain("curie-worker"),
             ],
         )
         .with_env(worker_env),
@@ -182,7 +182,7 @@ fn rollout_status_command(namespace: &str, release: &str, component: &str) -> Op
 /// pick up the token change. Connect must roll the worker AND the dispatcher (an
 /// existing dispatcher would otherwise keep stale tokens; a freshly rendered one
 /// is rolled harmlessly). Disconnect rolls only the worker -- helm deletes the
-/// dispatcher (its gate `agentos.dispatcher.enabled` goes false), so there is no
+/// dispatcher (its gate `curie.dispatcher.enabled` goes false), so there is no
 /// dispatcher to wait on.
 pub fn rollout_commands(disconnect: bool, namespace: &str, release: &str) -> Vec<OpsCommand> {
     let components: &[&str] = if disconnect {
@@ -223,7 +223,7 @@ pub fn require_connect_tokens(disconnect: bool, app_token: &str, bot_token: &str
 }
 
 /// Decide a Slack token from the two candidate sources, highest wins: the
-/// clap-merged `--flag`/env value, then a value persisted via `agentos secrets
+/// clap-merged `--flag`/env value, then a value persisted via `curie secrets
 /// set` (#749). `cli_value` is empty when neither the flag nor the env var was
 /// supplied; `saved` is `None` when the vault has no entry. Returns the empty
 /// string when nothing is available, which `require_connect_tokens` then rejects
@@ -237,7 +237,7 @@ pub fn resolve_slack_token(cli_value: &str, saved: Option<String>) -> String {
 }
 
 /// Resolve a `local comms` Slack token from the live vault, so a token persisted
-/// once with `agentos secrets set SLACK_APP_TOKEN`/`SLACK_BOT_TOKEN` survives
+/// once with `curie secrets set SLACK_APP_TOKEN`/`SLACK_BOT_TOKEN` survives
 /// across sessions and `--slack` needs no per-session re-export (#749).
 /// Precedence: the clap-merged `--flag`/env `cli_value` wins; only when it is
 /// empty is the vault consulted. The vault is never read on `--disconnect`
@@ -253,7 +253,7 @@ pub fn resolve_local_slack_token(name: &str, cli_value: &str, disconnect: bool) 
         match crate::secrets::get_value(name)? {
             Some(value) => {
                 crate::ui::ui().note(&format!(
-                    "{name}: loaded from AgentOS private storage for this run"
+                    "{name}: loaded from Curie private storage for this run"
                 ));
                 Some(value)
             }
@@ -366,7 +366,7 @@ pub async fn local_comms(opts: LocalCommsOpts) -> Result<CommsOutput> {
 
     if opts.model_mode == ModelMode::FakePinnedDespiteCredential {
         ui.warn(
-            "Running the FAKE model despite a credential in your shell: AGENTOS_FAKE_MODEL is pinned on. Unset it or set AGENTOS_FAKE_MODEL=0 to go live.",
+            "Running the FAKE model despite a credential in your shell: CURIE_FAKE_MODEL is pinned on. Unset it or set CURIE_FAKE_MODEL=0 to go live.",
         );
     }
     require_on_path("docker")?;
@@ -400,8 +400,8 @@ mod tests {
 
     fn common() -> CommonOpts {
         CommonOpts {
-            namespace: "agentos".into(),
-            release: "agentos".into(),
+            namespace: "curie".into(),
+            release: "curie".into(),
             dry_run: false,
         }
     }
@@ -457,7 +457,7 @@ mod tests {
     fn connect_command_sets_tokens_and_clears_stub_wiring() {
         let cmds = connect_commands(&CommsOpts {
             common: common(),
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             app_token: "xapp-123456789".into(),
             bot_token: "xoxb-123456789".into(),
             disconnect: false,
@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(cmds.len(), 1);
         assert_eq!(
             cmds[0].display(),
-            "helm upgrade agentos charts/agentos -n agentos --reuse-values \
+            "helm upgrade curie charts/curie -n curie --reuse-values \
              --set 'dispatcher.slack.appToken=xapp-123***' \
              --set 'dispatcher.slack.botToken=xoxb-123***' \
              --set worker.slackApiBaseUrl="
@@ -476,7 +476,7 @@ mod tests {
     fn connect_display_masks_both_tokens_but_argv_keeps_raw_values() {
         let cmds = connect_commands(&CommsOpts {
             common: common(),
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             app_token: "xapp-1-secretsecret".into(),
             bot_token: "xoxb-1-secretsecret".into(),
             disconnect: false,
@@ -505,16 +505,16 @@ mod tests {
 
     #[test]
     fn rollout_commands_connect_rolls_worker_and_dispatcher() {
-        let cmds = rollout_commands(false, "agentos", "agentos");
+        let cmds = rollout_commands(false, "curie", "curie");
         let lines: Vec<String> = cmds.iter().map(OpsCommand::display).collect();
         assert_eq!(
             lines,
             vec![
-                "kubectl -n agentos rollout restart deployment/agentos-worker".to_string(),
-                "kubectl -n agentos rollout restart deployment/agentos-dispatcher".to_string(),
-                "kubectl -n agentos rollout status deployment/agentos-worker --timeout=120s"
+                "kubectl -n curie rollout restart deployment/curie-worker".to_string(),
+                "kubectl -n curie rollout restart deployment/curie-dispatcher".to_string(),
+                "kubectl -n curie rollout status deployment/curie-worker --timeout=120s"
                     .to_string(),
-                "kubectl -n agentos rollout status deployment/agentos-dispatcher --timeout=120s"
+                "kubectl -n curie rollout status deployment/curie-dispatcher --timeout=120s"
                     .to_string(),
             ]
         );
@@ -522,13 +522,13 @@ mod tests {
 
     #[test]
     fn rollout_commands_disconnect_rolls_worker_only() {
-        let cmds = rollout_commands(true, "agentos", "agentos");
+        let cmds = rollout_commands(true, "curie", "curie");
         let lines: Vec<String> = cmds.iter().map(OpsCommand::display).collect();
         assert_eq!(
             lines,
             vec![
-                "kubectl -n agentos rollout restart deployment/agentos-worker".to_string(),
-                "kubectl -n agentos rollout status deployment/agentos-worker --timeout=120s"
+                "kubectl -n curie rollout restart deployment/curie-worker".to_string(),
+                "kubectl -n curie rollout status deployment/curie-worker --timeout=120s"
                     .to_string(),
             ]
         );
@@ -542,7 +542,7 @@ mod tests {
     fn disconnect_command_clears_tokens_without_stub_url_or_secret_bytes() {
         let cmds = disconnect_commands(&CommsOpts {
             common: common(),
-            chart: "charts/agentos".into(),
+            chart: "charts/curie".into(),
             app_token: "xapp-1-secretsecret".into(),
             bot_token: "xoxb-1-secretsecret".into(),
             disconnect: true,
@@ -550,7 +550,7 @@ mod tests {
         let line = cmds[0].display();
         assert_eq!(
             line,
-            "helm upgrade agentos charts/agentos -n agentos --reuse-values \
+            "helm upgrade curie charts/curie -n curie --reuse-values \
              --set dispatcher.slack.appToken= --set dispatcher.slack.botToken="
         );
         assert!(!line.contains("worker.slackApiBaseUrl"), "{line}");
@@ -600,7 +600,7 @@ mod tests {
             "SLACK_API_BASE_URL= 'SLACK_APP_TOKEN=xapp-1-s***' \
              'SLACK_BOT_TOKEN=xoxb-1-s***' \
              docker compose --profile core --profile slack -f compose.dev.yaml up -d --wait \
-             agentos-worker agentos-dispatcher"
+             curie-worker curie-dispatcher"
         );
         assert!(!line.contains("secretsecret"), "secret leaked: {line}");
     }
@@ -611,17 +611,17 @@ mod tests {
         assert_eq!(cmds.len(), 2);
         assert_eq!(
             cmds[0].display(),
-            "docker compose --profile core --profile slack -f compose.dev.yaml stop agentos-dispatcher"
+            "docker compose --profile core --profile slack -f compose.dev.yaml stop curie-dispatcher"
         );
         let second = cmds[1].display();
         assert_eq!(
             second,
             "SLACK_API_BASE_URL=http://localhost:8155/api/ \
              SLACK_BOT_TOKEN=xoxb-dev \
-             docker compose --profile core -f compose.dev.yaml up -d --wait agentos-worker"
+             docker compose --profile core -f compose.dev.yaml up -d --wait curie-worker"
         );
         assert!(
-            !second.contains("agentos-dispatcher"),
+            !second.contains("curie-dispatcher"),
             "disconnect worker restart must not mention dispatcher: {second}"
         );
     }
@@ -629,7 +629,7 @@ mod tests {
     /// Issue #450: `local comms --slack` restarted the worker on compose's fake
     /// default even when a real model credential was present in the shell. With
     /// a credential (`LiveFromCredential`), connect must inject
-    /// `AGENTOS_FAKE_MODEL=0` exactly once, and the pre-existing
+    /// `CURIE_FAKE_MODEL=0` exactly once, and the pre-existing
     /// `SLACK_API_BASE_URL` clear must survive alongside it (env is REPLACED,
     /// not appended, by `with_env`, so building the full vec once is load-bearing).
     #[test]
@@ -639,15 +639,15 @@ mod tests {
         assert_eq!(
             cmd.env
                 .iter()
-                .filter(|(k, _)| k == "AGENTOS_FAKE_MODEL")
+                .filter(|(k, _)| k == "CURIE_FAKE_MODEL")
                 .count(),
             1,
-            "exactly one AGENTOS_FAKE_MODEL; env={:?}",
+            "exactly one CURIE_FAKE_MODEL; env={:?}",
             cmd.env
         );
         assert!(cmd
             .env
-            .contains(&("AGENTOS_FAKE_MODEL".to_string(), "0".to_string())));
+            .contains(&("CURIE_FAKE_MODEL".to_string(), "0".to_string())));
         assert!(
             cmd.env
                 .contains(&("SLACK_API_BASE_URL".to_string(), String::new())),
@@ -657,7 +657,7 @@ mod tests {
     }
 
     /// `DefaultFake` and `FakePinnedDespiteCredential` must inject no
-    /// `AGENTOS_FAKE_MODEL` at all, leaving compose's `${AGENTOS_FAKE_MODEL:-1}`
+    /// `CURIE_FAKE_MODEL` at all, leaving compose's `${CURIE_FAKE_MODEL:-1}`
     /// default (or the operator's pin) alone.
     #[test]
     fn local_connect_non_live_modes_inject_nothing() {
@@ -667,8 +667,8 @@ mod tests {
         ] {
             let cmds = local_connect_commands(&local_comms_opts(false, mode));
             assert!(
-                !cmds[0].env.iter().any(|(k, _)| k == "AGENTOS_FAKE_MODEL"),
-                "{mode:?} must not inject AGENTOS_FAKE_MODEL; env={:?}",
+                !cmds[0].env.iter().any(|(k, _)| k == "CURIE_FAKE_MODEL"),
+                "{mode:?} must not inject CURIE_FAKE_MODEL; env={:?}",
                 cmds[0].env
             );
         }
@@ -687,15 +687,15 @@ mod tests {
             worker_cmd
                 .env
                 .iter()
-                .filter(|(k, _)| k == "AGENTOS_FAKE_MODEL")
+                .filter(|(k, _)| k == "CURIE_FAKE_MODEL")
                 .count(),
             1,
-            "exactly one AGENTOS_FAKE_MODEL; env={:?}",
+            "exactly one CURIE_FAKE_MODEL; env={:?}",
             worker_cmd.env
         );
         assert!(worker_cmd
             .env
-            .contains(&("AGENTOS_FAKE_MODEL".to_string(), "0".to_string())));
+            .contains(&("CURIE_FAKE_MODEL".to_string(), "0".to_string())));
         assert!(worker_cmd.env.contains(&(
             "SLACK_API_BASE_URL".to_string(),
             LOCAL_SLACK_STUB_URL.to_string(),
@@ -715,18 +715,15 @@ mod tests {
             let cmds = local_disconnect_commands(&local_comms_opts(true, mode));
             let worker_cmd = &cmds[1];
             assert!(
-                !worker_cmd
-                    .env
-                    .iter()
-                    .any(|(k, _)| k == "AGENTOS_FAKE_MODEL"),
-                "{mode:?} must not inject AGENTOS_FAKE_MODEL; env={:?}",
+                !worker_cmd.env.iter().any(|(k, _)| k == "CURIE_FAKE_MODEL"),
+                "{mode:?} must not inject CURIE_FAKE_MODEL; env={:?}",
                 worker_cmd.env
             );
         }
     }
 
     /// Anti-drift guard (issue #450): `local up` and `local comms` connect must
-    /// agree on whether/how they inject `AGENTOS_FAKE_MODEL`, for every
+    /// agree on whether/how they inject `CURIE_FAKE_MODEL`, for every
     /// `ModelMode`. Compares `up_command` (with `local_model: None`, since that
     /// path is its own independent live route) against `local_connect_commands`.
     #[test]
@@ -750,20 +747,20 @@ mod tests {
                 .env
                 .clone();
             let up_override: Option<&(String, String)> =
-                up_env.iter().find(|(k, _)| k == "AGENTOS_FAKE_MODEL");
+                up_env.iter().find(|(k, _)| k == "CURIE_FAKE_MODEL");
             let connect_override: Option<&(String, String)> =
-                connect_env.iter().find(|(k, _)| k == "AGENTOS_FAKE_MODEL");
+                connect_env.iter().find(|(k, _)| k == "CURIE_FAKE_MODEL");
             assert_eq!(
                 up_override, connect_override,
                 "{mode:?}: up_command and local_connect_commands disagree on \
-                 AGENTOS_FAKE_MODEL; up={up_env:?} connect={connect_env:?}"
+                 CURIE_FAKE_MODEL; up={up_env:?} connect={connect_env:?}"
             );
         }
     }
 
     /// Same anti-drift guard (issue #450) for the DISCONNECT leg: `local up`
     /// and `local comms --disconnect`'s worker-restarting command must agree
-    /// on whether/how they inject `AGENTOS_FAKE_MODEL`, for every `ModelMode`.
+    /// on whether/how they inject `CURIE_FAKE_MODEL`, for every `ModelMode`.
     #[test]
     fn up_and_local_disconnect_agree_on_fake_model_override_for_every_mode() {
         for mode in [
@@ -785,14 +782,13 @@ mod tests {
                 .env
                 .clone();
             let up_override: Option<&(String, String)> =
-                up_env.iter().find(|(k, _)| k == "AGENTOS_FAKE_MODEL");
-            let disconnect_override: Option<&(String, String)> = disconnect_env
-                .iter()
-                .find(|(k, _)| k == "AGENTOS_FAKE_MODEL");
+                up_env.iter().find(|(k, _)| k == "CURIE_FAKE_MODEL");
+            let disconnect_override: Option<&(String, String)> =
+                disconnect_env.iter().find(|(k, _)| k == "CURIE_FAKE_MODEL");
             assert_eq!(
                 up_override, disconnect_override,
                 "{mode:?}: up_command and local_disconnect_commands disagree on \
-                 AGENTOS_FAKE_MODEL; up={up_env:?} disconnect={disconnect_env:?}"
+                 CURIE_FAKE_MODEL; up={up_env:?} disconnect={disconnect_env:?}"
             );
         }
     }

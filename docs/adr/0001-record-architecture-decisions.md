@@ -5,7 +5,7 @@ Status: Accepted
 
 ## Context
 
-AgentOS's architecture was shaped by a set of decisions that were each validated against a live prototype before being committed, rather than chosen on paper. Those decisions and their evidence need to survive past the people who ran the prototypes, so future contributors understand *why* the architecture is the way it is and do not re-litigate settled questions.
+Curie's architecture was shaped by a set of decisions that were each validated against a live prototype before being committed, rather than chosen on paper. Those decisions and their evidence need to survive past the people who ran the prototypes, so future contributors understand *why* the architecture is the way it is and do not re-litigate settled questions.
 
 ## Decision
 

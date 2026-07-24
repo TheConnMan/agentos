@@ -5,7 +5,7 @@ agent turn. This is the "machinery under the hood" that [the message
 flow](message-flow.md) glosses over.
 
 The whole thing installs from one umbrella Helm chart
-([`charts/agentos`](../../charts/agentos)): the platform services, the backing
+([`charts/curie`](../../charts/curie)): the platform services, the backing
 stores, the sandbox substrate, and the security rails all come up together.
 
 ## The cluster at a glance
@@ -73,7 +73,7 @@ flowchart LR
 
 1. The worker's **`KubernetesSandboxClient`** creates a **`SandboxClaim`** CRD
    naming a pool in `spec.warmPoolRef.name`
-   ([`apps/worker/src/agentos_worker/sandbox/k8s.py`](../../apps/worker/src/agentos_worker/sandbox/k8s.py)).
+   ([`apps/worker/src/curie_worker/sandbox/k8s.py`](../../apps/worker/src/curie_worker/sandbox/k8s.py)).
 2. The controller **resolves that pool by name**. The `SandboxWarmPool` object
    must exist: with it absent every claim fails `Ready=False`
    `reason=WarmPoolNotFound` and the run times out. This is why the chart always
@@ -92,7 +92,7 @@ flowchart LR
 is for a fake-model dev pool, where an unbound warm pod boots cleanly. It does
 not speed up a real claim, for two independent reasons the chart states at the
 pool block in
-[`agent-sandbox.yaml`](../../charts/agentos/templates/agent-sandbox.yaml): a
+[`agent-sandbox.yaml`](../../charts/curie/templates/agent-sandbox.yaml): a
 real-model warm pod has **no bundle** and crash-loops, and a real claim
 **cold-creates anyway** because per-claim env injection cannot bind a pre-warmed
 pod (the `envVarsInjectionPolicy: Overrides` gotcha).
@@ -107,21 +107,21 @@ These are on by default, not opt-in (ADR-0006):
 
 - **Default-deny egress** NetworkPolicy, with a carve-out that keeps the cloud
   metadata endpoint (`169.254.169.254`) blocked and a narrow allow for the MinIO
-  bundle fetch. [`security-networkpolicy.yaml`](../../charts/agentos/templates/security-networkpolicy.yaml)
+  bundle fetch. [`security-networkpolicy.yaml`](../../charts/curie/templates/security-networkpolicy.yaml)
 - **gVisor RuntimeClass** on the runner, plus a preflight Job that fails the
   install if the kernel is not gVisor.
-  [`preflight-gvisor.yaml`](../../charts/agentos/templates/preflight-gvisor.yaml)
+  [`preflight-gvisor.yaml`](../../charts/curie/templates/preflight-gvisor.yaml)
 - **AVX / ClickHouse preflight** that blocks install when the CPU cannot run the
   chosen ClickHouse image.
-  [`preflight-avx.yaml`](../../charts/agentos/templates/preflight-avx.yaml)
+  [`preflight-avx.yaml`](../../charts/curie/templates/preflight-avx.yaml)
 - **Two Secrets, deliberately separate.** The chart-managed **platform** Secret
   holds the model credential, backing-store passwords, Langfuse keys, the API
   key, the GitHub webhook secret, and Slack tokens
-  ([`secrets.yaml`](../../charts/agentos/templates/secrets.yaml)). **Per-agent
+  ([`secrets.yaml`](../../charts/curie/templates/secrets.yaml)). **Per-agent
   connector secrets live in their own Secret**
-  ([`agent-connector-secrets.yaml`](../../charts/agentos/templates/agent-connector-secrets.yaml)),
+  ([`agent-connector-secrets.yaml`](../../charts/curie/templates/agent-connector-secrets.yaml)),
   injected per claim by
-  [`inject_connector_secrets`](../../apps/worker/src/agentos_worker/binding.py).
+  [`inject_connector_secrets`](../../apps/worker/src/curie_worker/binding.py).
   The split is the point: one agent's connector token is **not** readable by
   every component in the release. A platform Secret mounted into the API,
   worker, and dispatcher would make every agent's third-party credential
@@ -156,8 +156,8 @@ catalogued in [the interface catalog](../interfaces.md) and drawn together in
 
 | Piece | Path |
 |---|---|
-| Umbrella chart + templates | [`charts/agentos/templates/`](../../charts/agentos/templates) |
-| Sandbox template + warm pool | [`charts/agentos/templates/agent-sandbox.yaml`](../../charts/agentos/templates/agent-sandbox.yaml) |
-| Worker's Kubernetes client | [`apps/worker/src/agentos_worker/sandbox/k8s.py`](../../apps/worker/src/agentos_worker/sandbox/k8s.py) |
-| Local Docker client | [`apps/worker/src/agentos_worker/sandbox/docker.py`](../../apps/worker/src/agentos_worker/sandbox/docker.py) |
+| Umbrella chart + templates | [`charts/curie/templates/`](../../charts/curie/templates) |
+| Sandbox template + warm pool | [`charts/curie/templates/agent-sandbox.yaml`](../../charts/curie/templates/agent-sandbox.yaml) |
+| Worker's Kubernetes client | [`apps/worker/src/curie_worker/sandbox/k8s.py`](../../apps/worker/src/curie_worker/sandbox/k8s.py) |
+| Local Docker client | [`apps/worker/src/curie_worker/sandbox/docker.py`](../../apps/worker/src/curie_worker/sandbox/docker.py) |
 | Install / operations notes | [`operations.md`](../operations.md) |

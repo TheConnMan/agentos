@@ -5,7 +5,7 @@ approval MAY mint a one-shot grant for the tool the gate names (its ``gate``
 field, MANIFEST-supplied, never model-supplied). ``grantable_routes`` is the
 SINGLE normalization shared by the deploy-time validator
 (``plugin_format.validate``) and the runtime loader
-(``agentos_runner.approval.resolve_approval_policy``). Sharing one helper makes
+(``curie_runner.approval.resolve_approval_policy``). Sharing one helper makes
 the two paths identical *by construction* -- the #453/#544 lesson that a
 validator and a runtime loader normalizing separately can silently disagree and
 ship a fail-open.
@@ -186,7 +186,7 @@ def effective_operator_gate(
 
     The SDK plugin-prefixes a bundle MCP tool to
     ``mcp__plugin_<bundle>_<server>__<tool>``. An operator who writes the natural
-    shorthand ``mcp__<server>__<tool>`` in ``AGENTOS_APPROVAL_REQUIRED_TOOLS`` must
+    shorthand ``mcp__<server>__<tool>`` in ``CURIE_APPROVAL_REQUIRED_TOOLS`` must
     have it rewritten to that effective form, or the gate arms a literal that the
     runtime name never matches (a silent fail-open). Returns:
 
