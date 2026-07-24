@@ -83,15 +83,21 @@ Nine, all in the CLI crate:
 
 ## Known leakage
 
-- **The trait is not the whole `--json` surface.** `CliOutput` governs the
-  success path of the verbs that were converted. It cannot, by construction, prove
-  that *every* verb returns an output rather than printing directly — that is a
-  convention plus review, not a compile-time guarantee. A new handler can still call
-  a stdout emitter and bypass the seam; nothing fails the build if it does.
-- **No machine-readable schema.** Each `to_json` hand-builds its object with
-  `serde_json::json!`. There is no committed JSON Schema and no drift gate, unlike
-  the ACI (`packages/aci-protocol`, ADR-0017) or the channel protocol. An agent
-  parsing this output is coupled to shapes that are only enforced by tests.
+- **The trait is not the whole `--json` surface, but a new raw emitter now fails
+  the build (since #841).** `CliOutput` governs the success path of the verbs that
+  were converted. `schema_inventory.rs` pins the per-file `.emit_json(` call-site
+  count and raises `UnexpectedRawEmitter` when a new direct emitter appears, so a
+  handler that bypasses the seam and prints to stdout directly breaks CI rather
+  than sliding through on convention alone. The residual is that this is a
+  syntactic call-site inventory, not a type-level proof that *every* verb returns
+  a `CliOutput`.
+- **Committed JSON Schemas with a drift gate (since #841).** Each `to_json` is no
+  longer schema-free: there are 32 committed schemas under `cli/schema/` with an
+  index (`cli/schema/index.json`), a `syn`-based inventory gate over every `impl
+  CliOutput`, and per-family output validation — all 32 are validated against real
+  `to_json()` output across 44 tests in `cli/tests/json_contract.rs`. An agent
+  parsing this output is now coupled to shapes enforced by committed schemas and a
+  drift gate, like the ACI (`packages/aci-protocol`, ADR-0017), not by tests alone.
 - **Not separately graded.** This is not one of the six swap-readiness Jobs in the
   vision doc: the "second implementation" here would be a second *output format*
   (YAML, a table protocol), which nobody has asked for. Per the governing restraint,
@@ -102,5 +108,6 @@ Nine, all in the CLI crate:
 
 - **Issue:** [#456](https://github.com/curie-eng/agentos/issues/456) — the `--json` contract broke per-command; `Ui::emit` + `CliOutput` + `DryRunPlan` are its fix
 - **Issue:** [#460](https://github.com/curie-eng/agentos/issues/460) — the observability twin, whose local/cluster tiers share one `CliOutput`
+- **Issue:** [#841](https://github.com/curie-eng/agentos/issues/841) — added the committed `cli/schema/` JSON Schemas, the `schema_inventory` build gate, and the `json_contract` output validation this seam now relies on
 - **Vision doc:** [architecture-vision.md](../../architecture-vision.md) — CLI output is not one of the six swap-readiness Jobs; not separately graded
 - **ADR(s):** [ADR-0021](../../adr/0021-agentos-is-a-harness-for-coding-agents.md) — AgentOS is a harness for coding agents: the CLI's primary user is Claude Code (this seam is decision 1's enforcement); [ADR-0038](../../adr/0038-observability-cli-helper-for-the-agent-dev-loop.md) — the observability CLI is a thin client over the API proxy, not a second backend
