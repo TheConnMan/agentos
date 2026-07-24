@@ -219,6 +219,13 @@ class Settings(BaseSettings):
     # namespace are both bounded. Sizes are the serialized-JSON byte length.
     state_max_value_bytes: int = 64 * 1024  # 64 KiB per value
     state_max_namespace_bytes: int = 1024 * 1024  # 1 MiB per (agent, namespace)
+    # Per-agent cap on the NUMBER of namespaces (#852). #840 made the namespace an
+    # arbitrary model-supplied string, so without this a single sandbox could
+    # create unbounded namespaces -- each under the byte caps -- bloating the
+    # shared store and permanently enlarging the enumeration GROUP BY. Only
+    # creating a NEW namespace past the cap is refused; existing-namespace writes
+    # are unaffected.
+    state_max_namespaces: int = 256
     # The namespace the runner sandboxes run in, and the label selector that
     # identifies them (the chart labels sandbox pods
     # app.kubernetes.io/component=runner-sandbox). Used by the pod-list endpoint

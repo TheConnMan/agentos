@@ -155,6 +155,32 @@ async def _enforce_caps(
             f"{settings.state_max_namespace_bytes}-byte per-namespace cap",
         )
 
+    # Per-agent namespace-count cap (#852): refuse only a NEW namespace, and only
+    # once the agent is at its limit -- writes to an existing namespace never hit
+    # this. Without it a sandbox could loop creating unbounded namespaces, each
+    # under the byte caps, after #840 made the namespace agent-chosen.
+    namespace_exists = await session.scalar(
+        select(WorkflowStateEntry.namespace)
+        .where(
+            WorkflowStateEntry.agent_id == agent_id,
+            WorkflowStateEntry.namespace == namespace,
+        )
+        .limit(1)
+    )
+    if namespace_exists is None:
+        namespace_count = await session.scalar(
+            select(func.count(func.distinct(WorkflowStateEntry.namespace))).where(
+                WorkflowStateEntry.agent_id == agent_id
+            )
+        )
+        if (namespace_count or 0) >= settings.state_max_namespaces:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"agent is at its {settings.state_max_namespaces}-namespace cap; "
+                f"delete a namespace or reuse an existing one before creating "
+                f"{namespace!r}",
+            )
+
 
 async def _get_entry(
     session: AsyncSession, agent_id: uuid.UUID, namespace: str, key: str
