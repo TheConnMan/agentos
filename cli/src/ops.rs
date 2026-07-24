@@ -2216,6 +2216,32 @@ pub async fn discover_slack_bot_token(namespace: &str, release: &str) -> Result<
         })
 }
 
+/// Whether a `<release>-dispatcher` Deployment exists in `namespace` -- i.e. a
+/// real Slack workspace is connected (via `curie cluster comms --slack`). In
+/// that case `cluster message` posts a real placeholder and routes the approval
+/// card + resumed reply over that connected transport rather than a throwaway
+/// stub (#770/ADR-0078). A kubectl failure (cluster unreachable, no such
+/// namespace) reads as NOT connected, so the caller safely falls back to the
+/// stub path instead of failing the whole command. `--ignore-not-found` makes an
+/// absent Deployment an empty success, so "connected" is exactly "non-empty
+/// output on a zero exit".
+pub async fn dispatcher_connected(namespace: &str, release: &str) -> bool {
+    let cmd = OpsCommand::new(
+        "kubectl",
+        vec![
+            plain("-n"),
+            plain(namespace),
+            plain("get"),
+            plain("deployment"),
+            plain(format!("{release}-dispatcher")),
+            plain("--ignore-not-found"),
+            plain("-o"),
+            plain("name"),
+        ],
+    );
+    matches!(run_capture(&cmd).await, Ok((true, out, _)) if !out.trim().is_empty())
+}
+
 /// Read one data key out of a release's chart Secret, decoded server-side by
 /// kubectl's `base64decode` so the plaintext never lands in argv (#524). `None`
 /// when the Secret, the key, or the cluster is unreachable; the caller turns

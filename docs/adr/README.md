@@ -111,4 +111,5 @@ read verbatim from its `Status:` line. **Do not hand-edit it.** Run
 | 0079 | [Inbound triggers as a new event kind, ingested by the API](0079-inbound-triggers-as-a-new-event-kind.md) | Proposed |
 | 0080 | [Rename the project to Curie](0080-rename-to-curie.md) | Accepted |
 | 0081 | [A nightly graded parity ladder verifies the real-model promise CI cannot](0081-nightly-graded-parity-ladder.md) | Accepted |
+| 0082 | [Connected-transport approval cards ride a real CLI-posted placeholder](0082-connected-transport-approval-cards-via-a-real-placeholder.md) | Accepted |
 <!-- END GENERATED: adr-index -->

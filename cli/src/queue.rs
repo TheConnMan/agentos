@@ -432,6 +432,20 @@ mod tests {
     }
 
     #[test]
+    fn synthetic_turn_omits_the_endpoint_for_the_connected_transport() {
+        // #770/ADR-0078: the connected-transport path posts a REAL placeholder and
+        // enqueues against its ts with NO per-turn endpoint, so the turn rides the
+        // worker's default (connected) transport -- exactly like a real mention.
+        let turn = synthetic_turn("C-real", "U-curie-chat", "hi", "1.1", "1717.42", None);
+        assert!(turn.reply_handle.endpoint.is_none());
+        // The placeholder is the real Slack ts we posted, not a stub-minted one.
+        assert_eq!(turn.reply_handle.placeholder, "1717.42");
+        let value: serde_json::Value = serde_json::from_str(&payload_json(&turn).unwrap()).unwrap();
+        assert!(value["reply_handle"]["endpoint"].is_null());
+        assert_eq!(value["reply_handle"]["placeholder"], "1717.42");
+    }
+
+    #[test]
     fn synthetic_ids_are_distinct_and_slack_shaped() {
         let (thread_ts, placeholder_ts) = synthetic_thread_and_placeholder();
         assert_ne!(thread_ts, placeholder_ts);

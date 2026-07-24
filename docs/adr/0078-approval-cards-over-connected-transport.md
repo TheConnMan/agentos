@@ -36,6 +36,14 @@ change across a sacred boundary, not a passenger on the offline fix:
 
 ## Decision
 
+> **Mechanism superseded by ADR-0082.** The empty-`reply_handle.placeholder`
+> sentinel below cannot work: `ApprovalRequest.reply_placeholder` is
+> `min_length=1` in the frozen `packages/aci-protocol`, so such a turn is
+> rejected at approval-create and the pause escalates instead of posting a card.
+> ADR-0082 keeps this ADR's intent (the connected transport is the approval
+> surface) and replaces the mechanism: the CLI posts a REAL placeholder and
+> enqueues against its ts, needing no kernel or wire change.
+
 **When `message` runs against a connected transport (a running dispatcher),
 route the approval card and the resumed reply over the worker's default Slack
 transport instead of the throwaway stub.**
