@@ -20,6 +20,8 @@ Per ADR-0076, every attribute this module attaches comes from the closed
 with an unlisted key is a construction-time error, not a silent addition to the
 wire shape. ``SCHEMA_VERSION`` is bumped only when a key is removed, renamed, or
 changes value type; a new optional key is additive and does not bump it.
+``SPAN_ATTRIBUTE_VALUE_TYPES`` declares each key's value type, the mirror the
+drift gate diffs to catch a retype.
 """
 
 from __future__ import annotations
@@ -77,6 +79,34 @@ class SpanAttributeKey(StrEnum):
     AGENTOS_SESSION_ID = "agentos.session_id"
     AGENTOS_SANDBOX_ID = "agentos.sandbox_id"
     SCHEMA_VERSION_KEY = "schema.version"
+
+
+# ADR-0076 decision 2: a value-type change to an existing key is a breaking,
+# version-bump-worthy change exactly like a remove or rename, so it needs its
+# own source of truth to diff against -- the type half of the closed schema,
+# parallel to ``SpanAttributeKey`` being the key half. Every member above must
+# appear here exactly once, mapped to its value-type name ("str" or "int");
+# the ``gen_ai.usage.*`` token counts are the only "int" members (see
+# ``record_usage`` below and ``redact.py``'s "only str and int attributes are
+# set today").
+SPAN_ATTRIBUTE_VALUE_TYPES: Mapping[SpanAttributeKey, str] = {
+    SpanAttributeKey.TRACE_NAME: "str",
+    SpanAttributeKey.SESSION_ID: "str",
+    SpanAttributeKey.USER_ID: "str",
+    SpanAttributeKey.APPROVAL_DECISION: "str",
+    SpanAttributeKey.REQUEST_MODEL: "str",
+    SpanAttributeKey.MODEL: "str",
+    SpanAttributeKey.USAGE_INPUT_TOKENS: "int",
+    SpanAttributeKey.USAGE_OUTPUT_TOKENS: "int",
+    SpanAttributeKey.USAGE_CACHE_READ_INPUT_TOKENS: "int",
+    SpanAttributeKey.USAGE_CACHE_CREATION_INPUT_TOKENS: "int",
+    SpanAttributeKey.TOOL_NAME: "str",
+    SpanAttributeKey.OPERATION_NAME: "str",
+    SpanAttributeKey.SERVICE_NAME: "str",
+    SpanAttributeKey.AGENTOS_SESSION_ID: "str",
+    SpanAttributeKey.AGENTOS_SANDBOX_ID: "str",
+    SpanAttributeKey.SCHEMA_VERSION_KEY: "str",
+}
 
 
 # The ``usage`` mapping's own field names (SDK wire shape) to the span attribute
