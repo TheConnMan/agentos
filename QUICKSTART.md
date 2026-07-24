@@ -9,6 +9,10 @@ AgentOS itself — see [Where to go next](#where-to-go-next).
 
 ## Before you start
 
+> **Note for zsh users on macOS:** Enable comment support before copy-pasting
+> these commands by running `setopt interactivecomments` first, or add it to
+> your `~/.zshrc` to make it permanent.
+
 - **Docker** running locally.
 - The **`agentos`** binary on your PATH. One command downloads the prebuilt
   binary for your platform, verifies its signed checksum, and installs it:
