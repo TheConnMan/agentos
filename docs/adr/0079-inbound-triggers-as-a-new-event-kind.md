@@ -1,4 +1,4 @@
-# 20. Inbound triggers as a new event kind, ingested by the API
+# 79. Inbound triggers as a new event kind, ingested by the API
 
 Date: 2026-07-10
 Status: Proposed
